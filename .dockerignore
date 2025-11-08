@@ -1,8 +1,15 @@
+# Environment files
 .env
 .env.example
+
+# Git files
 .git
 .gitignore
+
+# Documentation
 *.md
+
+# Python files (legacy)
 __pycache__
 *.pyc
 *.pyo
@@ -19,3 +26,14 @@ htmlcov
 .tox
 .venv
 venv
+*.py
+requirements.txt
+
+# Go build artifacts
+dynip-updater
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
