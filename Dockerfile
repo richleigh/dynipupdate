@@ -2,10 +2,25 @@
 # Stage 1: Build the Go binary
 FROM golang:1.21-alpine AS builder
 
-# Install build dependencies and UPX
+# Get the target architecture
+ARG TARGETARCH
+
+# Install build dependencies and build UPX from source
+# This ensures consistent UPX availability across all platforms
 RUN apk add --no-cache \
-    git \
-    upx
+        git \
+        build-base \
+        cmake \
+        ucl-dev \
+        zlib-dev && \
+    git clone --depth 1 --branch v4.2.4 https://github.com/upx/upx.git /tmp/upx && \
+    cd /tmp/upx && \
+    make -j$(nproc) all && \
+    cp /tmp/upx/build/release/upx /usr/local/bin/ && \
+    chmod +x /usr/local/bin/upx && \
+    cd / && \
+    rm -rf /tmp/upx && \
+    apk del build-base cmake
 
 # Set working directory
 WORKDIR /app
@@ -23,7 +38,7 @@ COPY main.go .
 # - Disable CGO for static binary
 # - Strip debug info and symbol table
 # - Disable DWARF generation
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a \
     -installsuffix cgo \

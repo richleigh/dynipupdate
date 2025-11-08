@@ -10,7 +10,7 @@ services:
 
     # Run every 5 minutes (300 seconds)
     entrypoint: |
-      sh -c 'while true; do python dynip_update.py; sleep 300; done'
+      sh -c 'while true; do /dynip-updater; sleep 300; done'
 
     # Optional: Resource limits
     # deploy:
