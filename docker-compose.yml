@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  dynip-updater:
+    build: .
+    container_name: dynip-updater
+    env_file: .env
+    network_mode: host  # Required for accurate internal IP detection
+    restart: unless-stopped
+
+    # Run every 5 minutes (300 seconds)
+    entrypoint: |
+      sh -c 'while true; do python dynip_update.py; sleep 300; done'
+
+    # Optional: Resource limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.5'
+    #       memory: 128M
+    #     reservations:
+    #       cpus: '0.1'
+    #       memory: 64M
