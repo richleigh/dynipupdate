@@ -20,8 +20,7 @@ RUN apk add --no-cache \
     cp /tmp/upx/build/release/upx /usr/local/bin/ && \
     chmod +x /usr/local/bin/upx && \
     cd / && \
-    rm -rf /tmp/upx && \
-    apk del build-base cmake
+    rm -rf /tmp/upx
 
 # Set working directory
 WORKDIR /app
@@ -46,10 +45,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -o dynip-updater \
     main.go
 
-# Compress the binary with UPX
+# Compress the binary with UPX and clean up build dependencies
 # --best: maximum compression
 # --lzma: use LZMA compression for better ratio
-RUN upx --best --lzma dynip-updater
+RUN upx --best --lzma dynip-updater && \
+    apk del git build-base cmake ucl-dev zlib-dev
 
 # Stage 2: Minimal runtime image using scratch
 FROM scratch
