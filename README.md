@@ -1,6 +1,6 @@
 # Dynamic DNS Updater for CloudFlare
 
-A Python-based dynamic DNS updater that automatically detects and updates CloudFlare DNS records with three types of IP addresses:
+A lightweight Go-based dynamic DNS updater that automatically detects and updates CloudFlare DNS records with three types of IP addresses:
 
 1. **Internal IPv4** - RFC1918 private addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
 2. **External IPv4** - Public-facing IPv4 address detected via DNS TXT query
@@ -8,9 +8,12 @@ A Python-based dynamic DNS updater that automatically detects and updates CloudF
 
 ## Features
 
+- **Ultra-lightweight**: Built with Go and UPX compressed for minimal Docker image size (~2-3 MB)
 - Automatic IP address detection for all three types
 - CloudFlare API integration for DNS record management
 - Creates or updates DNS records as needed
+- Deletes stale DNS records when IP addresses are no longer available
+- Static binary with no runtime dependencies
 - Docker containerization for easy deployment
 - Configuration via environment variables
 - Comprehensive logging
@@ -32,8 +35,7 @@ The script uses the CloudFlare REST API to:
 
 ## Requirements
 
-- Python 3.11+
-- Docker (for containerized deployment)
+- Docker (for containerized deployment) or Go 1.21+ (for building from source)
 - CloudFlare account with API token
 - Network connectivity for IPv4 and/or IPv6 (as needed)
 
@@ -110,14 +112,14 @@ services:
     restart: always
     # Run every 5 minutes
     entrypoint: |
-      sh -c 'while true; do python dynip_update.py; sleep 300; done'
+      sh -c 'while true; do /dynip-updater; sleep 300; done'
 ```
 
-### Direct Python Usage
+### Direct Go Usage
 
-1. Install dependencies:
+1. Build the binary:
 ```bash
-pip install -r requirements.txt
+go build -o dynip-updater main.go
 ```
 
 2. Set environment variables:
@@ -127,9 +129,9 @@ export CF_ZONE_ID=your_zone_id
 export HOSTNAME=myhost.example.com
 ```
 
-3. Run the script:
+3. Run the binary:
 ```bash
-python dynip_update.py
+./dynip-updater
 ```
 
 ## CloudFlare API Token Setup
