@@ -5,22 +5,9 @@ FROM golang:1.21-alpine AS builder
 # Get the target architecture
 ARG TARGETARCH
 
-# Install build dependencies and build UPX from source
-# This ensures consistent UPX availability across all platforms
-RUN apk add --no-cache \
-        git \
-        build-base \
-        cmake \
-        ucl-dev \
-        zlib-dev && \
-    git clone --depth 1 --branch v4.2.4 https://github.com/upx/upx.git /tmp/upx && \
-    cd /tmp/upx && \
-    git submodule update --init --recursive --depth 1 && \
-    make -j$(nproc) all && \
-    cp /tmp/upx/build/release/upx /usr/local/bin/ && \
-    chmod +x /usr/local/bin/upx && \
-    cd / && \
-    rm -rf /tmp/upx
+# Try to install UPX from apk if available for this architecture
+# This will succeed on supported architectures and fail silently on unsupported ones
+RUN apk add --no-cache upx || true
 
 # Set working directory
 WORKDIR /app
@@ -45,14 +32,13 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -o dynip-updater \
     main.go
 
-# Compress the binary with UPX and clean up build dependencies
-# Note: UPX doesn't support riscv64, so we skip compression for that architecture
+# Compress the binary with UPX if available
+# UPX may not be available on all architectures (e.g., riscv64, s390x)
 # --best: maximum compression
 # --lzma: use LZMA compression for better ratio
-RUN if [ "$TARGETARCH" != "riscv64" ]; then \
+RUN if command -v upx >/dev/null 2>&1; then \
         upx --best --lzma dynip-updater; \
-    fi && \
-    apk del git build-base cmake ucl-dev zlib-dev
+    fi
 
 # Stage 2: Minimal runtime image using scratch
 FROM scratch
