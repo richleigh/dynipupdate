@@ -43,27 +43,26 @@ class IPAddressDetector:
         Returns the first found private IP address.
         """
         try:
-            # Get all network interfaces and their addresses
-            import netifaces
+            # Get all network interfaces and their addresses using psutil
+            import psutil
 
-            for interface in netifaces.interfaces():
-                addrs = netifaces.ifaddresses(interface)
-                if netifaces.AF_INET in addrs:
-                    for addr_info in addrs[netifaces.AF_INET]:
-                        ip_str = addr_info.get('addr')
-                        if ip_str:
-                            try:
-                                ip = ipaddress.ip_address(ip_str)
-                                # Check if it's in any RFC1918 range
-                                for network in IPAddressDetector.RFC1918_RANGES:
-                                    if ip in network:
-                                        logger.info(f"Found internal IPv4: {ip_str}")
-                                        return ip_str
-                            except ValueError:
-                                continue
+            for interface, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    # Check if it's an IPv4 address
+                    if addr.family == socket.AF_INET:
+                        ip_str = addr.address
+                        try:
+                            ip = ipaddress.ip_address(ip_str)
+                            # Check if it's in any RFC1918 range
+                            for network in IPAddressDetector.RFC1918_RANGES:
+                                if ip in network:
+                                    logger.info(f"Found internal IPv4: {ip_str}")
+                                    return ip_str
+                        except ValueError:
+                            continue
         except ImportError:
-            # Fallback method without netifaces
-            logger.warning("netifaces not available, using fallback method")
+            # Fallback method without psutil
+            logger.warning("psutil not available, using fallback method")
             try:
                 # Connect to a public IP to determine our interface address
                 # This doesn't actually send packets
