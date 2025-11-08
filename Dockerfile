@@ -15,6 +15,7 @@ RUN apk add --no-cache \
         zlib-dev && \
     git clone --depth 1 --branch v4.2.4 https://github.com/upx/upx.git /tmp/upx && \
     cd /tmp/upx && \
+    git submodule update --init --recursive --depth 1 && \
     make -j$(nproc) all && \
     cp /tmp/upx/build/release/upx /usr/local/bin/ && \
     chmod +x /usr/local/bin/upx && \
