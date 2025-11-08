@@ -46,9 +46,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     main.go
 
 # Compress the binary with UPX and clean up build dependencies
+# Note: UPX doesn't support riscv64, so we skip compression for that architecture
 # --best: maximum compression
 # --lzma: use LZMA compression for better ratio
-RUN upx --best --lzma dynip-updater && \
+RUN if [ "$TARGETARCH" != "riscv64" ]; then \
+        upx --best --lzma dynip-updater; \
+    fi && \
     apk del git build-base cmake ucl-dev zlib-dev
 
 # Stage 2: Minimal runtime image using scratch
