@@ -340,12 +340,25 @@ func getExternalIPv6() string {
 	return ""
 }
 
+// CloudFlareAPI defines the interface for CloudFlare DNS operations
+type CloudFlareAPI interface {
+	getRecordID(name, recordType string) string
+	createRecord(name, recordType, content string, proxied bool) bool
+	updateRecord(recordID, name, recordType, content string, proxied bool) bool
+	deleteRecord(recordID, name, recordType string) bool
+	deleteRecordIfExists(name, recordType string) bool
+	upsertRecord(name, recordType, content string, proxied bool) bool
+}
+
 // CloudFlareClient handles CloudFlare API interactions
 type CloudFlareClient struct {
 	APIToken string
 	ZoneID   string
 	BaseURL  string
 }
+
+// Verify CloudFlareClient implements CloudFlareAPI
+var _ CloudFlareAPI = (*CloudFlareClient)(nil)
 
 // formatErrors converts CloudFlare error messages from json.RawMessage to readable strings
 func formatErrors(errors []json.RawMessage) string {
