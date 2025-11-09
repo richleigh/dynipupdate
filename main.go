@@ -130,7 +130,7 @@ func main() {
 
 		// Create/update heartbeat for this domain
 		heartbeatName := heartbeatRecordName(config.InternalDomain)
-		heartbeatData := heartbeatContent(config.InstanceID)
+		heartbeatData := heartbeatContent()
 		totalCount++
 		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
 			successCount++
@@ -298,10 +298,25 @@ func loadConfig(cleanupMode bool) *Config {
 	log.Printf("API token loaded (length: %d chars, starts with: %.8s..., ends with: ...%.4s)",
 		len(apiToken), apiToken, apiToken[max(0, len(apiToken)-4):])
 
-	// Get actual machine hostname for INSTANCE_ID default
-	machineHostname, err := os.Hostname()
-	if err != nil {
-		machineHostname = "unknown-host"
+	config := &Config{
+		CFAPIToken:      apiToken,
+		CFZoneID:        getEnvOrExit("CF_ZONE_ID"),
+		InternalDomain:  os.Getenv("INTERNAL_DOMAIN"),
+		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
+		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
+		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
+		Proxied:         strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
+		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
+		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
+	}
+
+	// In cleanup mode, domains are optional (cleanup whichever are configured)
+	// In update mode, at least one domain must be configured
+	if !cleanupMode {
+		if config.InternalDomain == "" && config.ExternalDomain == "" &&
+		   config.IPv6Domain == "" && config.CombinedDomain == "" {
+			log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, or COMBINED_DOMAIN)")
+		}
 	}
 
 	config := &Config{
@@ -346,20 +361,19 @@ func max(a, b int) int {
 	return b
 }
 
-// heartbeatRecordName creates the TXT record name for a domain's heartbeat
-// Example: "anubis.i.4" -> "_heartbeat.anubis.i.4"
+// heartbeatRecordName returns the domain name for the heartbeat TXT record
+// The heartbeat is stored as a TXT record at the same name as the A/AAAA records
+// Example: "anubis.i.4.bees.wtf" -> "anubis.i.4.bees.wtf" (same name, different type)
 func heartbeatRecordName(domain string) string {
-	if domain == "" {
-		return ""
-	}
-	return fmt.Sprintf("_heartbeat.%s", domain)
+	return domain
 }
 
-// heartbeatContent creates the TXT record content with current timestamp and instance ID
-// Format: "timestamp,instanceID"
-func heartbeatContent(instanceID string) string {
+// heartbeatContent creates the TXT record content with current timestamp
+// Format: "timestamp" (quoted string)
+func heartbeatContent() string {
 	timestamp := time.Now().Unix()
-	return fmt.Sprintf("%d,%s", timestamp, instanceID)
+	// TXT records should be quoted strings - just the timestamp
+	return fmt.Sprintf("\"%d\"", timestamp)
 }
 
 func getEnvOrExit(key string) string {
@@ -678,6 +692,30 @@ func (cf *CloudFlareClient) getAllRecords(name, recordType string) []CFRecord {
 	resp, err := cf.makeRequest("GET", path, nil)
 	if err != nil {
 		log.Printf("Error getting records for %s: %v", name, err)
+		return []CFRecord{}
+	}
+	defer resp.Body.Close()
+
+	var result CFListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return []CFRecord{}
+	}
+
+	if result.Success {
+		return result.Result
+	}
+
+	return []CFRecord{}
+}
+
+// getAllRecordsByType returns all records in the zone matching the type (no name filter)
+func (cf *CloudFlareClient) getAllRecordsByType(recordType string) []CFRecord {
+	path := fmt.Sprintf("/zones/%s/dns_records?type=%s&per_page=1000", cf.ZoneID, recordType)
+
+	resp, err := cf.makeRequest("GET", path, nil)
+	if err != nil {
+		log.Printf("Error getting all %s records: %v", recordType, err)
 		return []CFRecord{}
 	}
 	defer resp.Body.Close()

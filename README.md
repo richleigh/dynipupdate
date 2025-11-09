@@ -43,7 +43,6 @@ All configuration is done via environment variables. See `.env.example` for a co
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `INSTANCE_ID` | Identifier for heartbeat records | Machine hostname |
 | `CF_PROXIED` | Proxy through CloudFlare (true/false) | `false` |
 | `STALE_THRESHOLD_SECONDS` | Cleanup: Age before records are stale | `3600` (1 hour) |
 | `CLEANUP_INTERVAL_SECONDS` | Cleanup: How often to check | `300` (5 minutes) |
