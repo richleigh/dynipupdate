@@ -211,3 +211,44 @@ func TestFormatErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestCFErrorCode81058 verifies that we can parse error code 81058 (duplicate record)
+func TestCFErrorCode81058(t *testing.T) {
+	// This is what CloudFlare returns when a record already exists
+	jsonResponse := `{
+		"success": false,
+		"errors": [
+			{"code":81058,"message":"An identical record already exists."}
+		],
+		"result": null
+	}`
+
+	var response CFSingleResponse
+	err := json.Unmarshal([]byte(jsonResponse), &response)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal error response: %v", err)
+	}
+
+	if response.Success {
+		t.Error("Expected success to be false")
+	}
+
+	if len(response.Errors) != 1 {
+		t.Fatalf("Expected 1 error, got %d", len(response.Errors))
+	}
+
+	// Verify we can parse the error code
+	var cfErr CFError
+	err = json.Unmarshal(response.Errors[0], &cfErr)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal CFError: %v", err)
+	}
+
+	if cfErr.Code != 81058 {
+		t.Errorf("Expected error code 81058, got %d", cfErr.Code)
+	}
+
+	if cfErr.Message != "An identical record already exists." {
+		t.Errorf("Expected message 'An identical record already exists.', got %s", cfErr.Message)
+	}
+}
