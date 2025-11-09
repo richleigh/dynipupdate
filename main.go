@@ -11,8 +11,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/miekg/dns"
 )
 
 // RFC1918 private IP ranges
@@ -221,35 +219,46 @@ func getInternalIPv4() string {
 }
 
 func getExternalIPv4() string {
-	// Use Google's IPv4 DNS servers
-	c := new(dns.Client)
-	c.Net = "udp4"
-	m := new(dns.Msg)
-	m.SetQuestion("o-o.myaddr.l.google.com.", dns.TypeTXT)
+	// Use multiple services for redundancy
+	services := []string{
+		"https://api.ipify.org",
+		"https://api4.ipify.org",
+		"https://icanhazip.com",
+		"https://ifconfig.me/ip",
+	}
 
-	// Try both Google IPv4 DNS servers
-	servers := []string{"8.8.8.8:53", "8.8.4.4:53"}
-	for _, server := range servers {
-		r, _, err := c.Exchange(m, server)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// Force IPv4
+				return (&net.Dialer{}).DialContext(ctx, "tcp4", addr)
+			},
+		},
+	}
+
+	for _, service := range services {
+		resp, err := client.Get(service)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			continue
 		}
 
-		if r.Rcode != dns.RcodeSuccess {
-			continue
-		}
-
-		for _, ans := range r.Answer {
-			if txt, ok := ans.(*dns.TXT); ok {
-				for _, str := range txt.Txt {
-					// Validate it's an IPv4 address
-					ip := net.ParseIP(str)
-					if ip != nil && ip.To4() != nil {
-						log.Printf("Found external IPv4: %s", str)
-						return str
-					}
-				}
-			}
+		ipStr := strings.TrimSpace(string(body))
+		// Validate it's an IPv4 address
+		ip := net.ParseIP(ipStr)
+		if ip != nil && ip.To4() != nil {
+			log.Printf("Found external IPv4: %s", ipStr)
+			return ipStr
 		}
 	}
 
@@ -258,35 +267,45 @@ func getExternalIPv4() string {
 }
 
 func getExternalIPv6() string {
-	// Use Google's IPv6 DNS servers
-	c := new(dns.Client)
-	c.Net = "udp6"
-	m := new(dns.Msg)
-	m.SetQuestion("o-o.myaddr.l.google.com.", dns.TypeTXT)
+	// Use multiple services for redundancy
+	services := []string{
+		"https://api6.ipify.org",
+		"https://icanhazip.com",
+		"https://ifconfig.me/ip",
+	}
 
-	// Try both Google IPv6 DNS servers
-	servers := []string{"[2001:4860:4860::8888]:53", "[2001:4860:4860::8844]:53"}
-	for _, server := range servers {
-		r, _, err := c.Exchange(m, server)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// Force IPv6
+				return (&net.Dialer{}).DialContext(ctx, "tcp6", addr)
+			},
+		},
+	}
+
+	for _, service := range services {
+		resp, err := client.Get(service)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			continue
 		}
 
-		if r.Rcode != dns.RcodeSuccess {
-			continue
-		}
-
-		for _, ans := range r.Answer {
-			if txt, ok := ans.(*dns.TXT); ok {
-				for _, str := range txt.Txt {
-					// Validate it's an IPv6 address
-					ip := net.ParseIP(str)
-					if ip != nil && ip.To4() == nil && ip.To16() != nil {
-						log.Printf("Found external IPv6: %s", str)
-						return str
-					}
-				}
-			}
+		ipStr := strings.TrimSpace(string(body))
+		// Validate it's an IPv6 address
+		ip := net.ParseIP(ipStr)
+		if ip != nil && ip.To4() == nil && ip.To16() != nil {
+			log.Printf("Found external IPv6: %s", ipStr)
+			return ipStr
 		}
 	}
 
@@ -299,6 +318,19 @@ type CloudFlareClient struct {
 	APIToken string
 	ZoneID   string
 	BaseURL  string
+}
+
+// formatErrors converts CloudFlare error messages from json.RawMessage to readable strings
+func formatErrors(errors []json.RawMessage) string {
+	if len(errors) == 0 {
+		return "unknown error"
+	}
+
+	var errorStrings []string
+	for _, err := range errors {
+		errorStrings = append(errorStrings, string(err))
+	}
+	return strings.Join(errorStrings, ", ")
 }
 
 func (cf *CloudFlareClient) makeRequest(method, path string, body io.Reader) (*http.Response, error) {
@@ -374,7 +406,7 @@ func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxi
 		return true
 	}
 
-	log.Printf("Failed to create record: %v", result.Errors)
+	log.Printf("Failed to create record: %s", formatErrors(result.Errors))
 	return false
 }
 
@@ -413,7 +445,7 @@ func (cf *CloudFlareClient) updateRecord(recordID, name, recordType, content str
 		return true
 	}
 
-	log.Printf("Failed to update record: %v", result.Errors)
+	log.Printf("Failed to update record: %s", formatErrors(result.Errors))
 	return false
 }
 
@@ -438,7 +470,7 @@ func (cf *CloudFlareClient) deleteRecord(recordID, name, recordType string) bool
 		return true
 	}
 
-	log.Printf("Failed to delete record: %v", result.Errors)
+	log.Printf("Failed to delete record: %s", formatErrors(result.Errors))
 	return false
 }
 
