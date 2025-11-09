@@ -13,15 +13,16 @@ DOCKER_USERNAME ?= $(shell \
 	fi \
 )
 DOCKER_REPO ?= dynipupdate
-IMAGE_NAME ?= $(DOCKER_USERNAME)/$(DOCKER_REPO)
+# For local builds, use a simple name; for push, require username
+IMAGE_NAME ?= $(if $(DOCKER_USERNAME),$(DOCKER_USERNAME)/$(DOCKER_REPO),$(DOCKER_REPO))
 PLATFORMS ?= linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64
 
 help:
 	@echo "Dynamic DNS Updater - Build Targets"
 	@echo ""
-	@echo "  make build       - Build Docker images (default: all platforms, no push)"
-	@echo "  make push        - Push previously built images to Docker Hub"
-	@echo "  make build-push  - Build and push in one step (default: all platforms)"
+	@echo "  make build       - Build Docker images locally (no DOCKER_USERNAME needed)"
+	@echo "  make push        - Push previously built images to Docker Hub (requires DOCKER_USERNAME)"
+	@echo "  make build-push  - Build and push in one step (requires DOCKER_USERNAME)"
 	@echo "  make test        - Run Go unit tests"
 	@echo "  make version-tag - Show what the next version tag will be"
 	@echo "  make clean       - Clean build artifacts"
@@ -32,36 +33,43 @@ help:
 	@echo "  IMAGE_NAME       - Full image name (current: $(IMAGE_NAME))"
 	@echo "  PLATFORMS        - Build platforms (current: $(PLATFORMS))"
 	@echo ""
-	@echo "Quick Start:"
+	@echo "Quick Start (Local Development):"
+	@echo "  make build                    # Build locally without pushing"
+	@echo ""
+	@echo "Quick Start (Push to Registry):"
 	@echo "  export DOCKER_USERNAME=your-username"
 	@echo "  make build-push"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build                                        # Build all platforms (no push)"
+	@echo "  make build                                        # Build all platforms locally"
 	@echo "  PLATFORMS=linux/amd64 make build                  # Build just amd64 (for testing)"
 	@echo "  PLATFORMS=linux/arm64 make build                  # Build just arm64 (for testing)"
-	@echo "  make push                                         # Push what you built"
-	@echo "  make build-push                                   # Build all platforms and push"
+	@echo "  make push                                         # Push what you built (needs username)"
+	@echo "  make build-push                                   # Build all platforms and push (needs username)"
 	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build-push # Build specific platforms and push"
 
 check-docker-username:
-	@if echo "$(IMAGE_NAME)" | grep -q "^/"; then \
+	@if [ -z "$(DOCKER_USERNAME)" ]; then \
 		echo "Error: DOCKER_USERNAME not set and could not be auto-detected."; \
+		echo ""; \
+		echo "Pushing to Docker Hub requires a username."; \
 		echo ""; \
 		echo "Please either:"; \
 		echo "  1. Set DOCKER_USERNAME environment variable:"; \
 		echo "     export DOCKER_USERNAME=your-username"; \
-		echo "     make build"; \
+		echo "     make build-push"; \
 		echo ""; \
 		echo "  2. Override IMAGE_NAME directly:"; \
-		echo "     IMAGE_NAME=your-username/dynipupdate make build"; \
+		echo "     IMAGE_NAME=your-username/dynipupdate make build-push"; \
 		echo ""; \
 		echo "  3. Ensure you're logged in to Docker Hub:"; \
 		echo "     docker login"; \
+		echo ""; \
+		echo "For local builds only, use: make build"; \
 		exit 1; \
 	fi
 
-version-tag: check-docker-username
+version-tag:
 	@echo "Next version tag will be: $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd)"
 
 test:
@@ -70,7 +78,8 @@ test:
 
 # Build Docker images (without pushing)
 # Supports building specific platforms via PLATFORMS variable
-build: check-docker-username test
+# Note: Does not require DOCKER_USERNAME for local builds
+build: test
 	@echo "Building Docker images..."
 	@$(eval VERSION_TAG := $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd))
 	@echo "Building version: $(VERSION_TAG)"
