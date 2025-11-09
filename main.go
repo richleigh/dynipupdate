@@ -66,7 +66,7 @@ type Config struct {
 
 // IPAddresses holds detected IP addresses
 type IPAddresses struct {
-	InternalIPv4 string
+	InternalIPv4 []string
 	ExternalIPv4 string
 	ExternalIPv6 string
 }
@@ -87,16 +87,50 @@ func main() {
 	successCount := 0
 	totalCount := 0
 
-	// Update internal IPv4 record
-	totalCount++
-	if ips.InternalIPv4 != "" {
-		if cf.upsertRecord(config.InternalDomain, "A", ips.InternalIPv4, config.Proxied) {
-			successCount++
+	// Update internal IPv4 records (support multiple addresses)
+	if len(ips.InternalIPv4) > 0 {
+		// Get all existing records for the internal domain
+		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
+
+		// Create a map of existing record contents for quick lookup
+		existingIPs := make(map[string]string) // content -> recordID
+		for _, record := range existingRecords {
+			existingIPs[record.Content] = record.ID
+		}
+
+		// Create a map of detected IPs
+		detectedIPs := make(map[string]bool)
+		for _, ip := range ips.InternalIPv4 {
+			detectedIPs[ip] = true
+		}
+
+		// Create/update records for each detected IP
+		for _, ip := range ips.InternalIPv4 {
+			totalCount++
+			if cf.upsertRecord(config.InternalDomain, "A", ip, config.Proxied) {
+				successCount++
+			}
+		}
+
+		// Delete stale records (IPs that exist in DNS but not in detected list)
+		for content, recordID := range existingIPs {
+			if !detectedIPs[content] {
+				totalCount++
+				log.Printf("Deleting stale internal IPv4 record: %s", content)
+				if cf.deleteRecord(recordID, config.InternalDomain, "A") {
+					successCount++
+				}
+			}
 		}
 	} else {
-		log.Println("No internal IPv4 address found - deleting any existing record")
-		if cf.deleteRecordIfExists(config.InternalDomain, "A") {
-			successCount++
+		// No internal IPs found - delete all existing records
+		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
+		for _, record := range existingRecords {
+			totalCount++
+			log.Printf("No internal IPv4 addresses found - deleting record: %s", record.Content)
+			if cf.deleteRecord(record.ID, config.InternalDomain, "A") {
+				successCount++
+			}
 		}
 	}
 
@@ -201,7 +235,7 @@ func detectIPs() *IPAddresses {
 	return ips
 }
 
-func getInternalIPv4() string {
+func getInternalIPv4() []string {
 	// Parse RFC1918 ranges
 	var privateNets []*net.IPNet
 	for _, cidr := range rfc1918Ranges {
@@ -213,8 +247,11 @@ func getInternalIPv4() string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		log.Printf("Error getting network interfaces: %v", err)
-		return ""
+		return []string{}
 	}
+
+	var internalIPs []string
+	seen := make(map[string]bool)
 
 	// Check each interface for RFC1918 addresses
 	for _, iface := range interfaces {
@@ -239,15 +276,25 @@ func getInternalIPv4() string {
 
 			for _, privateNet := range privateNets {
 				if privateNet.Contains(ip) {
-					log.Printf("Found internal IPv4: %s", ip.String())
-					return ip.String()
+					ipStr := ip.String()
+					// Avoid duplicates
+					if !seen[ipStr] {
+						seen[ipStr] = true
+						internalIPs = append(internalIPs, ipStr)
+						log.Printf("Found internal IPv4: %s on interface %s", ipStr, iface.Name)
+					}
 				}
 			}
 		}
 	}
 
-	log.Println("No internal IPv4 address found")
-	return ""
+	if len(internalIPs) == 0 {
+		log.Println("No internal IPv4 addresses found")
+	} else {
+		log.Printf("Found %d internal IPv4 address(es)", len(internalIPs))
+	}
+
+	return internalIPs
 }
 
 func getExternalIPv4() string {
@@ -348,6 +395,8 @@ func getExternalIPv6() string {
 // CloudFlareAPI defines the interface for CloudFlare DNS operations
 type CloudFlareAPI interface {
 	getRecordID(name, recordType string) string
+	getRecord(name, recordType string) *CFRecord
+	getAllRecords(name, recordType string) []CFRecord
 	createRecord(name, recordType, content string, proxied bool) bool
 	updateRecord(recordID, name, recordType, content string, proxied bool) bool
 	deleteRecord(recordID, name, recordType string) bool
@@ -455,6 +504,30 @@ func (cf *CloudFlareClient) getRecord(name, recordType string) *CFRecord {
 	}
 
 	return nil
+}
+
+// getAllRecords returns all records matching the name and type
+func (cf *CloudFlareClient) getAllRecords(name, recordType string) []CFRecord {
+	path := fmt.Sprintf("/zones/%s/dns_records?name=%s&type=%s", cf.ZoneID, name, recordType)
+
+	resp, err := cf.makeRequest("GET", path, nil)
+	if err != nil {
+		log.Printf("Error getting records for %s: %v", name, err)
+		return []CFRecord{}
+	}
+	defer resp.Body.Close()
+
+	var result CFListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return []CFRecord{}
+	}
+
+	if result.Success {
+		return result.Result
+	}
+
+	return []CFRecord{}
 }
 
 func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxied bool) bool {

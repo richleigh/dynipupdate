@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -255,45 +256,70 @@ func TestCFErrorCode81058(t *testing.T) {
 
 // MockCloudFlareClient implements CloudFlareAPI for testing
 type MockCloudFlareClient struct {
-	records       map[string]*CFRecord // key: "name:type"
+	records       map[string][]*CFRecord // key: "name:type", value: list of records
 	updateCalled  int
 	createCalled  int
 	deleteCalled  int
+	nextID        int
 }
 
 func (m *MockCloudFlareClient) getRecordID(name, recordType string) string {
 	key := name + ":" + recordType
-	if record, exists := m.records[key]; exists {
-		return record.ID
+	if records, exists := m.records[key]; exists && len(records) > 0 {
+		return records[0].ID
 	}
 	return ""
 }
 
 func (m *MockCloudFlareClient) getRecord(name, recordType string) *CFRecord {
 	key := name + ":" + recordType
-	if record, exists := m.records[key]; exists {
-		return record
+	if records, exists := m.records[key]; exists && len(records) > 0 {
+		return records[0]
 	}
 	return nil
+}
+
+func (m *MockCloudFlareClient) getAllRecords(name, recordType string) []CFRecord {
+	key := name + ":" + recordType
+	var result []CFRecord
+	if records, exists := m.records[key]; exists {
+		for _, record := range records {
+			result = append(result, *record)
+		}
+	}
+	return result
 }
 
 func (m *MockCloudFlareClient) createRecord(name, recordType, content string, proxied bool) bool {
 	m.createCalled++
 	key := name + ":" + recordType
-	m.records[key] = &CFRecord{
-		ID:      "test-id-" + key,
+
+	// Generate unique ID
+	m.nextID++
+	newRecord := &CFRecord{
+		ID:      fmt.Sprintf("test-id-%d", m.nextID),
 		Type:    recordType,
 		Name:    name,
 		Content: content,
 	}
+
+	if _, exists := m.records[key]; !exists {
+		m.records[key] = []*CFRecord{}
+	}
+	m.records[key] = append(m.records[key], newRecord)
 	return true
 }
 
 func (m *MockCloudFlareClient) updateRecord(recordID, name, recordType, content string, proxied bool) bool {
 	m.updateCalled++
 	key := name + ":" + recordType
-	if record, exists := m.records[key]; exists {
-		record.Content = content
+	if records, exists := m.records[key]; exists {
+		for _, record := range records {
+			if record.ID == recordID {
+				record.Content = content
+				return true
+			}
+		}
 	}
 	return true
 }
@@ -301,7 +327,20 @@ func (m *MockCloudFlareClient) updateRecord(recordID, name, recordType, content 
 func (m *MockCloudFlareClient) deleteRecord(recordID, name, recordType string) bool {
 	m.deleteCalled++
 	key := name + ":" + recordType
-	delete(m.records, key)
+	if records, exists := m.records[key]; exists {
+		// Remove the record with matching ID
+		var filtered []*CFRecord
+		for _, record := range records {
+			if record.ID != recordID {
+				filtered = append(filtered, record)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(m.records, key)
+		} else {
+			m.records[key] = filtered
+		}
+	}
 	return true
 }
 
@@ -329,15 +368,17 @@ func (m *MockCloudFlareClient) upsertRecord(name, recordType, content string, pr
 // TestUpsertRecordNoChange verifies that upsertRecord doesn't call update when content is unchanged
 func TestUpsertRecordNoChange(t *testing.T) {
 	mock := &MockCloudFlareClient{
-		records: make(map[string]*CFRecord),
+		records: make(map[string][]*CFRecord),
 	}
 
 	// Create initial record
-	mock.records["example.com:A"] = &CFRecord{
-		ID:      "test-123",
-		Type:    "A",
-		Name:    "example.com",
-		Content: "192.168.1.1",
+	mock.records["example.com:A"] = []*CFRecord{
+		{
+			ID:      "test-123",
+			Type:    "A",
+			Name:    "example.com",
+			Content: "192.168.1.1",
+		},
 	}
 
 	// Call upsert with same content
@@ -359,15 +400,17 @@ func TestUpsertRecordNoChange(t *testing.T) {
 // TestUpsertRecordContentChanged verifies that upsertRecord DOES call update when content changes
 func TestUpsertRecordContentChanged(t *testing.T) {
 	mock := &MockCloudFlareClient{
-		records: make(map[string]*CFRecord),
+		records: make(map[string][]*CFRecord),
 	}
 
 	// Create initial record
-	mock.records["example.com:A"] = &CFRecord{
-		ID:      "test-123",
-		Type:    "A",
-		Name:    "example.com",
-		Content: "192.168.1.1",
+	mock.records["example.com:A"] = []*CFRecord{
+		{
+			ID:      "test-123",
+			Type:    "A",
+			Name:    "example.com",
+			Content: "192.168.1.1",
+		},
 	}
 
 	// Call upsert with different content
@@ -398,7 +441,7 @@ func TestUpsertRecordContentChanged(t *testing.T) {
 // TestUpsertRecordCreate verifies that upsertRecord calls create when record doesn't exist
 func TestUpsertRecordCreate(t *testing.T) {
 	mock := &MockCloudFlareClient{
-		records: make(map[string]*CFRecord),
+		records: make(map[string][]*CFRecord),
 	}
 
 	// Call upsert for non-existent record
@@ -423,5 +466,148 @@ func TestUpsertRecordCreate(t *testing.T) {
 	}
 	if record.Content != "192.168.1.1" {
 		t.Errorf("Expected content to be 192.168.1.1, got %s", record.Content)
+	}
+}
+
+// TestMultipleInternalIPs verifies that multiple internal IPs can be registered
+func TestMultipleInternalIPs(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+	}
+
+	// Create records for multiple IPs
+	ips := []string{"192.168.1.10", "10.0.0.5", "172.16.5.20"}
+	for _, ip := range ips {
+		if !mock.createRecord("internal.example.com", "A", ip, false) {
+			t.Fatalf("Failed to create record for %s", ip)
+		}
+	}
+
+	// Verify all records were created
+	allRecords := mock.getAllRecords("internal.example.com", "A")
+	if len(allRecords) != 3 {
+		t.Errorf("Expected 3 records, got %d", len(allRecords))
+	}
+
+	// Verify each IP is present
+	recordIPs := make(map[string]bool)
+	for _, record := range allRecords {
+		recordIPs[record.Content] = true
+	}
+
+	for _, ip := range ips {
+		if !recordIPs[ip] {
+			t.Errorf("Expected to find record for IP %s", ip)
+		}
+	}
+}
+
+// TestStaleRecordCleanup verifies that stale records are properly deleted
+func TestStaleRecordCleanup(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+		nextID:  100,
+	}
+
+	// Create initial records
+	mock.records["internal.example.com:A"] = []*CFRecord{
+		{ID: "test-101", Type: "A", Name: "internal.example.com", Content: "192.168.1.10"},
+		{ID: "test-102", Type: "A", Name: "internal.example.com", Content: "10.0.0.5"},
+		{ID: "test-103", Type: "A", Name: "internal.example.com", Content: "172.16.5.20"},
+	}
+
+	// Get existing records
+	existingRecords := mock.getAllRecords("internal.example.com", "A")
+	if len(existingRecords) != 3 {
+		t.Fatalf("Expected 3 initial records, got %d", len(existingRecords))
+	}
+
+	// Simulate detected IPs (only 2 IPs detected, one is missing)
+	detectedIPs := map[string]bool{
+		"192.168.1.10": true,
+		"10.0.0.5":     true,
+		// 172.16.5.20 is no longer detected (interface went down)
+	}
+
+	// Build map of existing IPs
+	existingIPs := make(map[string]string) // content -> recordID
+	for _, record := range existingRecords {
+		existingIPs[record.Content] = record.ID
+	}
+
+	// Delete stale records
+	deletedCount := 0
+	for content, recordID := range existingIPs {
+		if !detectedIPs[content] {
+			if mock.deleteRecord(recordID, "internal.example.com", "A") {
+				deletedCount++
+			}
+		}
+	}
+
+	// Verify stale record was deleted
+	if deletedCount != 1 {
+		t.Errorf("Expected 1 stale record to be deleted, deleted %d", deletedCount)
+	}
+
+	if mock.deleteCalled != 1 {
+		t.Errorf("Expected deleteRecord to be called once, but was called %d times", mock.deleteCalled)
+	}
+
+	// Verify remaining records
+	remainingRecords := mock.getAllRecords("internal.example.com", "A")
+	if len(remainingRecords) != 2 {
+		t.Errorf("Expected 2 remaining records, got %d", len(remainingRecords))
+	}
+
+	// Verify the deleted IP is gone
+	for _, record := range remainingRecords {
+		if record.Content == "172.16.5.20" {
+			t.Error("Expected stale IP 172.16.5.20 to be deleted, but it's still present")
+		}
+	}
+
+	// Verify the kept IPs are still there
+	foundIPs := make(map[string]bool)
+	for _, record := range remainingRecords {
+		foundIPs[record.Content] = true
+	}
+
+	if !foundIPs["192.168.1.10"] {
+		t.Error("Expected IP 192.168.1.10 to remain")
+	}
+	if !foundIPs["10.0.0.5"] {
+		t.Error("Expected IP 10.0.0.5 to remain")
+	}
+}
+
+// TestNoInternalIPsDeletesAll verifies that all records are deleted when no IPs detected
+func TestNoInternalIPsDeletesAll(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+	}
+
+	// Create initial records
+	mock.records["internal.example.com:A"] = []*CFRecord{
+		{ID: "test-201", Type: "A", Name: "internal.example.com", Content: "192.168.1.10"},
+		{ID: "test-202", Type: "A", Name: "internal.example.com", Content: "10.0.0.5"},
+	}
+
+	// Simulate no IPs detected (all interfaces down)
+	existingRecords := mock.getAllRecords("internal.example.com", "A")
+
+	// Delete all records
+	for _, record := range existingRecords {
+		mock.deleteRecord(record.ID, "internal.example.com", "A")
+	}
+
+	// Verify all records were deleted
+	remainingRecords := mock.getAllRecords("internal.example.com", "A")
+	if len(remainingRecords) != 0 {
+		t.Errorf("Expected 0 remaining records, got %d", len(remainingRecords))
+	}
+
+	if mock.deleteCalled != 2 {
+		t.Errorf("Expected deleteRecord to be called twice, but was called %d times", mock.deleteCalled)
 	}
 }
