@@ -58,11 +58,13 @@ export CLEANUP_INTERVAL_SECONDS=300  # 5 minutes (default)
 
 ## Deployment
 
-### Docker Compose
+**IMPORTANT**: The main updater must run **periodically** (every 5 minutes recommended) to keep the heartbeat alive. Here are deployment options:
+
+### Docker Compose (Recommended for containers)
 
 See `docker-compose.example.yml` for a complete example.
 
-**Main updater** - Run on every host/container:
+**Main updater** - Runs in a loop every 5 minutes:
 ```yaml
 services:
   dns-updater:
@@ -72,7 +74,12 @@ services:
       - INSTANCE_ID=web-01
       - INTERNAL_DOMAIN=internal.example.com
       - COMBINED_DOMAIN=all.example.com
-      # ... other config
+      - UPDATE_INTERVAL=300  # 5 minutes
+    command: >
+      sh -c 'while true; do
+        /app/dynipupdate;
+        sleep ${UPDATE_INTERVAL:-300};
+      done'
 ```
 
 **Cleanup service** - Run **ONCE** per environment (not per host):
@@ -85,8 +92,55 @@ services:
     environment:
       - INTERNAL_DOMAIN=internal.example.com
       - COMBINED_DOMAIN=all.example.com
-      - STALE_THRESHOLD_SECONDS=900
+      - STALE_THRESHOLD_SECONDS=900   # 3x UPDATE_INTERVAL
       - CLEANUP_INTERVAL_SECONDS=300
+```
+
+### Bare Metal / VMs (cron)
+
+For bare metal or VMs, use cron to run periodically:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add entry to run every 5 minutes
+*/5 * * * * INSTANCE_ID=$(hostname) /usr/local/bin/dynipupdate >> /var/log/dynipupdate.log 2>&1
+```
+
+### Bare Metal / VMs (systemd timer)
+
+Create systemd service and timer:
+
+**`/etc/systemd/system/dynipupdate.service`:**
+```ini
+[Unit]
+Description=Dynamic DNS Updater
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dynipupdate/config
+ExecStart=/usr/local/bin/dynipupdate
+```
+
+**`/etc/systemd/system/dynipupdate.timer`:**
+```ini
+[Unit]
+Description=Run Dynamic DNS Updater every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable and start:
+```bash
+systemctl daemon-reload
+systemctl enable --now dynipupdate.timer
 ```
 
 ### Kubernetes
