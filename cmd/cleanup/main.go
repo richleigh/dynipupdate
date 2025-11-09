@@ -40,9 +40,8 @@ type Config struct {
 	ExternalDomain  string
 	IPv6Domain      string
 	CombinedDomain  string
-	HeartbeatDomain string // Domain where heartbeats are stored (defaults to InternalDomain)
-	StaleThreshold  int    // seconds
-	CleanupInterval int    // seconds
+	StaleThreshold  int // seconds
+	CleanupInterval int // seconds
 }
 
 // CloudFlareClient handles CloudFlare API interactions
@@ -86,29 +85,29 @@ func runCleanup(cf *CloudFlareClient, config *Config) {
 
 	// Cleanup internal domain (A records only) if configured
 	if config.InternalDomain != "" {
-		deleted := cleanupDomain(cf, config.InternalDomain, "A", config.HeartbeatDomain, config.StaleThreshold)
+		deleted := cleanupDomain(cf, config.InternalDomain, "A", config.StaleThreshold)
 		totalDeleted += deleted
 		log.Printf("Deleted %d stale A records from %s", deleted, config.InternalDomain)
 	}
 
 	// Cleanup external domain (A records only) if configured
 	if config.ExternalDomain != "" {
-		deleted := cleanupDomain(cf, config.ExternalDomain, "A", config.HeartbeatDomain, config.StaleThreshold)
+		deleted := cleanupDomain(cf, config.ExternalDomain, "A", config.StaleThreshold)
 		totalDeleted += deleted
 		log.Printf("Deleted %d stale A records from %s", deleted, config.ExternalDomain)
 	}
 
 	// Cleanup IPv6 domain (AAAA records only) if configured
 	if config.IPv6Domain != "" {
-		deleted := cleanupDomain(cf, config.IPv6Domain, "AAAA", config.HeartbeatDomain, config.StaleThreshold)
+		deleted := cleanupDomain(cf, config.IPv6Domain, "AAAA", config.StaleThreshold)
 		totalDeleted += deleted
 		log.Printf("Deleted %d stale AAAA records from %s", deleted, config.IPv6Domain)
 	}
 
 	// Cleanup combined domain (both A and AAAA records) if configured
 	if config.CombinedDomain != "" {
-		deletedA := cleanupDomain(cf, config.CombinedDomain, "A", config.HeartbeatDomain, config.StaleThreshold)
-		deletedAAAA := cleanupDomain(cf, config.CombinedDomain, "AAAA", config.HeartbeatDomain, config.StaleThreshold)
+		deletedA := cleanupDomain(cf, config.CombinedDomain, "A", config.StaleThreshold)
+		deletedAAAA := cleanupDomain(cf, config.CombinedDomain, "AAAA", config.StaleThreshold)
 		totalDeleted += deletedA + deletedAAAA
 		log.Printf("Deleted %d stale A and %d stale AAAA records from %s", deletedA, deletedAAAA, config.CombinedDomain)
 	}
@@ -116,86 +115,68 @@ func runCleanup(cf *CloudFlareClient, config *Config) {
 	log.Printf("Cleanup cycle complete. Total deleted: %d", totalDeleted)
 }
 
-func cleanupDomain(cf *CloudFlareClient, domain string, recordType string, heartbeatDomain string, staleThresholdSeconds int) int {
+func cleanupDomain(cf *CloudFlareClient, domain string, recordType string, staleThresholdSeconds int) int {
 	deletedCount := 0
 
-	// Get all records of the specified type for this domain (will include service subdomains)
-	records := cf.getAllRecords(domain, recordType)
-
-	// Group records by instance ID
-	recordsByInstance := make(map[string][]CFRecord)
-	for _, record := range records {
-		// Extract instance ID from record name (e.g., "web-prod-1.internal.example.com" -> "web-prod-1")
-		instanceID := extractInstanceID(record.Name, domain)
-		if instanceID == "" {
-			// This is a direct record on the base domain, not a service subdomain - skip cleanup
-			log.Printf("Skipping non-service record: %s", record.Name)
-			continue
-		}
-
-		if recordsByInstance[instanceID] == nil {
-			recordsByInstance[instanceID] = []CFRecord{}
-		}
-		recordsByInstance[instanceID] = append(recordsByInstance[instanceID], record)
+	if domain == "" {
+		return 0
 	}
 
-	// Check heartbeat for each instance and delete stale records
-	for instanceID, instanceRecords := range recordsByInstance {
-		// Get the heartbeat TXT record for this instance
-		heartbeatName := heartbeatRecordName(instanceID, heartbeatDomain)
-		heartbeatRecords := cf.getAllRecords(heartbeatName, "TXT")
+	// Check the heartbeat for this domain
+	heartbeatName := heartbeatRecordName(domain)
+	heartbeatRecords := cf.getAllRecords(heartbeatName, "TXT")
 
-		shouldDelete := false
-		deleteReason := ""
+	shouldDelete := false
+	deleteReason := ""
 
-		if len(heartbeatRecords) == 0 {
-			// No heartbeat record - this service is stale
+	if len(heartbeatRecords) == 0 {
+		// No heartbeat found - domain is stale
+		shouldDelete = true
+		deleteReason = "no heartbeat found"
+	} else {
+		// Parse the heartbeat content: "timestamp,instanceID"
+		heartbeatContent := heartbeatRecords[0].Content
+		// Remove quotes if present (CloudFlare returns TXT records with quotes)
+		heartbeatContent = strings.Trim(heartbeatContent, "\"")
+
+		parts := strings.Split(heartbeatContent, ",")
+		if len(parts) < 1 {
+			log.Printf("Invalid heartbeat format for %s: %s", domain, heartbeatContent)
 			shouldDelete = true
-			deleteReason = "no heartbeat found"
+			deleteReason = "invalid heartbeat format"
 		} else {
-			// Parse the heartbeat content: "timestamp,instanceID"
-			heartbeatContent := heartbeatRecords[0].Content
-			// Remove quotes if present (CloudFlare returns TXT records with quotes)
-			heartbeatContent = strings.Trim(heartbeatContent, "\"")
-
-			parts := strings.Split(heartbeatContent, ",")
-			if len(parts) < 1 {
-				log.Printf("Invalid heartbeat format for instance %s: %s", instanceID, heartbeatContent)
+			timestamp, err := strconv.ParseInt(parts[0], 10, 64)
+			if err != nil {
+				log.Printf("Invalid timestamp in heartbeat for %s: %s", domain, parts[0])
 				shouldDelete = true
-				deleteReason = "invalid heartbeat format"
+				deleteReason = "invalid timestamp"
 			} else {
-				timestamp, err := strconv.ParseInt(parts[0], 10, 64)
-				if err != nil {
-					log.Printf("Invalid timestamp in heartbeat for instance %s: %s", instanceID, parts[0])
+				// Check if heartbeat is stale
+				age := time.Now().Unix() - timestamp
+				if age > int64(staleThresholdSeconds) {
 					shouldDelete = true
-					deleteReason = "invalid timestamp"
-				} else {
-					// Check if heartbeat is stale
-					age := time.Now().Unix() - timestamp
-					if age > int64(staleThresholdSeconds) {
-						shouldDelete = true
-						deleteReason = fmt.Sprintf("stale heartbeat (age: %ds)", age)
-					}
+					deleteReason = fmt.Sprintf("stale heartbeat (age: %ds)", age)
 				}
 			}
 		}
+	}
 
-		if shouldDelete {
-			log.Printf("Deleting service %s (%s, %d %s records)", instanceID, deleteReason, len(instanceRecords), recordType)
+	if shouldDelete {
+		log.Printf("Deleting %s %s records (%s)", domain, recordType, deleteReason)
 
-			// Delete all records for this instance
-			for _, record := range instanceRecords {
-				if cf.deleteRecord(record.ID, record.Name, recordType) {
-					deletedCount++
-					log.Printf("  Deleted %s record: %s -> %s", recordType, record.Name, record.Content)
-				}
+		// Delete all records of this type for the domain
+		records := cf.getAllRecords(domain, recordType)
+		for _, record := range records {
+			if cf.deleteRecord(record.ID, record.Name, recordType) {
+				deletedCount++
+				log.Printf("  Deleted %s record: %s -> %s", recordType, record.Name, record.Content)
 			}
+		}
 
-			// Delete the heartbeat TXT record
-			if len(heartbeatRecords) > 0 {
-				cf.deleteRecord(heartbeatRecords[0].ID, heartbeatName, "TXT")
-				log.Printf("  Deleted heartbeat: %s", heartbeatName)
-			}
+		// Delete the heartbeat TXT record
+		if len(heartbeatRecords) > 0 {
+			cf.deleteRecord(heartbeatRecords[0].ID, heartbeatName, "TXT")
+			log.Printf("  Deleted heartbeat: %s", heartbeatName)
 		}
 	}
 
@@ -206,20 +187,13 @@ func loadConfig() *Config {
 	apiToken := getEnvOrExit("CF_API_TOKEN")
 	apiToken = strings.TrimSpace(apiToken)
 
-	internalDomain := os.Getenv("INTERNAL_DOMAIN")
-	heartbeatDomain := os.Getenv("HEARTBEAT_DOMAIN")
-	if heartbeatDomain == "" {
-		heartbeatDomain = internalDomain // Default to internal domain
-	}
-
 	config := &Config{
 		CFAPIToken:      apiToken,
 		CFZoneID:        getEnvOrExit("CF_ZONE_ID"),
-		InternalDomain:  internalDomain,
+		InternalDomain:  os.Getenv("INTERNAL_DOMAIN"),
 		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
 		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
 		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
-		HeartbeatDomain: heartbeatDomain,
 		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
 		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
 	}
@@ -229,7 +203,6 @@ func loadConfig() *Config {
 	log.Printf("  External Domain: %s", config.ExternalDomain)
 	log.Printf("  IPv6 Domain: %s", config.IPv6Domain)
 	log.Printf("  Combined Domain: %s", config.CombinedDomain)
-	log.Printf("  Heartbeat Domain: %s", config.HeartbeatDomain)
 	log.Printf("  Stale Threshold: %d seconds", config.StaleThreshold)
 	log.Printf("  Cleanup Interval: %d seconds", config.CleanupInterval)
 
@@ -257,30 +230,13 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 	return intValue
 }
 
-// extractInstanceID extracts the instance ID from a full DNS record name
-// Example: "web-prod-1.internal.example.com", "internal.example.com" -> "web-prod-1"
-func extractInstanceID(recordName, baseDomain string) string {
-	// Remove trailing dot if present
-	recordName = strings.TrimSuffix(recordName, ".")
-	baseDomain = strings.TrimSuffix(baseDomain, ".")
-
-	// Record name should be: instanceID.baseDomain
-	suffix := "." + baseDomain
-	if !strings.HasSuffix(recordName, suffix) {
-		return "" // Not a service subdomain
-	}
-
-	instanceID := strings.TrimSuffix(recordName, suffix)
-	return instanceID
-}
-
-// heartbeatRecordName creates the TXT record name for a service heartbeat
-// Example: "web-prod-1", "internal.example.com" -> "_heartbeat.web-prod-1.internal.example.com"
-func heartbeatRecordName(instanceID, baseDomain string) string {
-	if baseDomain == "" {
+// heartbeatRecordName creates the TXT record name for a domain's heartbeat
+// Example: "anubis.i.4" -> "_heartbeat.anubis.i.4"
+func heartbeatRecordName(domain string) string {
+	if domain == "" {
 		return ""
 	}
-	return fmt.Sprintf("_heartbeat.%s.%s", instanceID, baseDomain)
+	return fmt.Sprintf("_heartbeat.%s", domain)
 }
 
 // CloudFlare API methods
