@@ -37,6 +37,8 @@ type Config struct {
 	CFAPIToken      string
 	CFZoneID        string
 	InternalDomain  string
+	ExternalDomain  string
+	IPv6Domain      string
 	CombinedDomain  string
 	StaleThreshold  int // seconds
 	CleanupInterval int // seconds
@@ -81,31 +83,46 @@ func runCleanup(cf *CloudFlareClient, config *Config) {
 
 	totalDeleted := 0
 
-	// Cleanup internal domain if configured
+	// Cleanup internal domain (A records only) if configured
 	if config.InternalDomain != "" {
-		deleted := cleanupDomain(cf, config.InternalDomain, config.StaleThreshold)
+		deleted := cleanupDomain(cf, config.InternalDomain, "A", config.StaleThreshold)
 		totalDeleted += deleted
-		log.Printf("Deleted %d stale records from %s", deleted, config.InternalDomain)
+		log.Printf("Deleted %d stale A records from %s", deleted, config.InternalDomain)
 	}
 
-	// Cleanup combined domain if configured
-	if config.CombinedDomain != "" {
-		deleted := cleanupDomain(cf, config.CombinedDomain, config.StaleThreshold)
+	// Cleanup external domain (A records only) if configured
+	if config.ExternalDomain != "" {
+		deleted := cleanupDomain(cf, config.ExternalDomain, "A", config.StaleThreshold)
 		totalDeleted += deleted
-		log.Printf("Deleted %d stale records from %s", deleted, config.CombinedDomain)
+		log.Printf("Deleted %d stale A records from %s", deleted, config.ExternalDomain)
+	}
+
+	// Cleanup IPv6 domain (AAAA records only) if configured
+	if config.IPv6Domain != "" {
+		deleted := cleanupDomain(cf, config.IPv6Domain, "AAAA", config.StaleThreshold)
+		totalDeleted += deleted
+		log.Printf("Deleted %d stale AAAA records from %s", deleted, config.IPv6Domain)
+	}
+
+	// Cleanup combined domain (both A and AAAA records) if configured
+	if config.CombinedDomain != "" {
+		deletedA := cleanupDomain(cf, config.CombinedDomain, "A", config.StaleThreshold)
+		deletedAAAA := cleanupDomain(cf, config.CombinedDomain, "AAAA", config.StaleThreshold)
+		totalDeleted += deletedA + deletedAAAA
+		log.Printf("Deleted %d stale A and %d stale AAAA records from %s", deletedA, deletedAAAA, config.CombinedDomain)
 	}
 
 	log.Printf("Cleanup cycle complete. Total deleted: %d", totalDeleted)
 }
 
-func cleanupDomain(cf *CloudFlareClient, domain string, staleThresholdSeconds int) int {
+func cleanupDomain(cf *CloudFlareClient, domain string, recordType string, staleThresholdSeconds int) int {
 	deletedCount := 0
 
-	// Get all A records for this domain
-	aRecords := cf.getAllRecords(domain, "A")
+	// Get all records of the specified type for this domain
+	records := cf.getAllRecords(domain, recordType)
 
-	for _, aRecord := range aRecords {
-		ip := aRecord.Content
+	for _, record := range records {
+		ip := record.Content
 
 		// Get the heartbeat TXT record for this IP
 		heartbeatName := heartbeatRecordName(ip, domain)
@@ -113,8 +130,8 @@ func cleanupDomain(cf *CloudFlareClient, domain string, staleThresholdSeconds in
 
 		if len(heartbeatRecords) == 0 {
 			// No heartbeat record - this IP is stale
-			log.Printf("No heartbeat found for IP %s - deleting", ip)
-			if cf.deleteRecord(aRecord.ID, domain, "A") {
+			log.Printf("No heartbeat found for %s %s - deleting", recordType, ip)
+			if cf.deleteRecord(record.ID, domain, recordType) {
 				deletedCount++
 			}
 			continue
@@ -144,10 +161,10 @@ func cleanupDomain(cf *CloudFlareClient, domain string, staleThresholdSeconds in
 			if len(parts) >= 2 {
 				instanceID = parts[1]
 			}
-			log.Printf("Stale heartbeat for IP %s (instance: %s, age: %ds) - deleting", ip, instanceID, age)
+			log.Printf("Stale heartbeat for %s %s (instance: %s, age: %ds) - deleting", recordType, ip, instanceID, age)
 
-			// Delete the A record
-			if cf.deleteRecord(aRecord.ID, domain, "A") {
+			// Delete the record
+			if cf.deleteRecord(record.ID, domain, recordType) {
 				deletedCount++
 			}
 
@@ -169,13 +186,17 @@ func loadConfig() *Config {
 		CFAPIToken:      apiToken,
 		CFZoneID:        getEnvOrExit("CF_ZONE_ID"),
 		InternalDomain:  os.Getenv("INTERNAL_DOMAIN"),
+		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
+		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
 		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
-		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 900),  // 15 minutes
+		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
 		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
 	}
 
 	log.Printf("Configuration:")
 	log.Printf("  Internal Domain: %s", config.InternalDomain)
+	log.Printf("  External Domain: %s", config.ExternalDomain)
+	log.Printf("  IPv6 Domain: %s", config.IPv6Domain)
 	log.Printf("  Combined Domain: %s", config.CombinedDomain)
 	log.Printf("  Stale Threshold: %d seconds", config.StaleThreshold)
 	log.Printf("  Cleanup Interval: %d seconds", config.CleanupInterval)

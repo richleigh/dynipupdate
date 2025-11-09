@@ -167,8 +167,25 @@ func main() {
 		if cf.upsertRecord(config.ExternalDomain, "A", ips.ExternalIPv4, config.Proxied) {
 			successCount++
 		}
+		// Create heartbeat for external IPv4
+		heartbeatName := heartbeatRecordName(ips.ExternalIPv4, config.ExternalDomain)
+		heartbeatData := heartbeatContent(config.InstanceID)
+		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+			successCount++
+			log.Printf("Updated heartbeat for external IPv4 %s", ips.ExternalIPv4)
+		}
 	} else {
 		log.Println("No external IPv4 address found - deleting any existing record")
+		// Get existing record to delete its heartbeat
+		existingRecords := cf.getAllRecords(config.ExternalDomain, "A")
+		for _, record := range existingRecords {
+			// Delete heartbeat first
+			heartbeatName := heartbeatRecordName(record.Content, config.ExternalDomain)
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for external IPv4 %s", record.Content)
+			}
+		}
 		if cf.deleteRecordIfExists(config.ExternalDomain, "A") {
 			successCount++
 		}
@@ -180,8 +197,25 @@ func main() {
 		if cf.upsertRecord(config.IPv6Domain, "AAAA", ips.ExternalIPv6, config.Proxied) {
 			successCount++
 		}
+		// Create heartbeat for external IPv6
+		heartbeatName := heartbeatRecordName(ips.ExternalIPv6, config.IPv6Domain)
+		heartbeatData := heartbeatContent(config.InstanceID)
+		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+			successCount++
+			log.Printf("Updated heartbeat for external IPv6 %s", ips.ExternalIPv6)
+		}
 	} else {
 		log.Println("No external IPv6 address found - deleting any existing record")
+		// Get existing record to delete its heartbeat
+		existingRecords := cf.getAllRecords(config.IPv6Domain, "AAAA")
+		for _, record := range existingRecords {
+			// Delete heartbeat first
+			heartbeatName := heartbeatRecordName(record.Content, config.IPv6Domain)
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for external IPv6 %s", record.Content)
+			}
+		}
 		if cf.deleteRecordIfExists(config.IPv6Domain, "AAAA") {
 			successCount++
 		}
