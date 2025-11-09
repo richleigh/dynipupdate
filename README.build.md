@@ -49,14 +49,28 @@ The build system automatically creates version tags in the format `YYYYMMDD###`:
 - `YYYYMMDD` - Current date
 - `###` - Three-digit incrementing number (001, 002, 003, etc.)
 
-The script queries Docker Hub to find the highest existing tag for today and increments it.
+### How Version Incrementing Works
+
+To avoid race conditions when multiple builds happen simultaneously (e.g., CI/CD pipelines, multiple developers), the system uses **git tags** to track versions:
+
+1. **Fetches** existing git tags from remote (format: `v-YYYYMMDD###`)
+2. **Finds** the highest version number for today
+3. **Creates** a new git tag atomically (if tag exists, retry automatically)
+4. **Pushes** the git tag to remote
+5. **Builds** and pushes Docker image with matching tag
+
+This approach ensures:
+- **No duplicate versions** - git tag creation is atomic
+- **Works with multiple build servers** - git is the source of truth
+- **No API propagation delays** - doesn't depend on Docker Hub API
+- **Automatic retry** - handles concurrent builds gracefully
 
 **Example:**
-- First build today: `20251109001`
-- Second build today: `20251109002`
-- Next day's first build: `20251110001`
+- First build today: `20251109001` (creates git tag `v-20251109001`)
+- Second build today: `20251109002` (creates git tag `v-20251109002`)
+- Next day's first build: `20251110001` (creates git tag `v-20251110001`)
 
-Both version tag and `latest` are pushed.
+Both Docker image version tag and `latest` are pushed.
 
 ## Examples
 
@@ -95,6 +109,17 @@ If you see this error, either:
 2. Override `IMAGE_NAME` directly
 3. Ensure you're logged in with `docker login`
 
-**Docker Hub API rate limits**
+**Duplicate version tags**
 
-The version detection queries Docker Hub's public API. If you hit rate limits, the script will fall back to version `001`.
+If you see the same version number used twice, this indicates the git tags weren't being pushed correctly. The system creates git tags (format: `v-YYYYMMDD###`) to track versions. Ensure:
+- You have push access to the repository
+- Your git remote is configured correctly
+- Run `git fetch --tags` before building to get the latest tags
+
+**Git tags vs Docker tags**
+
+The build system creates two types of tags:
+- **Git tags** (format: `v-YYYYMMDD###`) - used internally for version tracking
+- **Docker tags** (format: `YYYYMMDD###`) - the actual Docker image tags
+
+The git tags ensure version uniqueness across builds and servers.

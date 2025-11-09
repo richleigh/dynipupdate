@@ -1,6 +1,10 @@
 #!/bin/bash
 # Get the next version number for a given image and date
 # Usage: get-next-version.sh IMAGE_NAME DATE
+#
+# This script uses git tags to track version numbers, avoiding race conditions
+# that occur when multiple builds happen simultaneously or when Docker Hub API
+# has propagation delays.
 
 set -euo pipefail
 
@@ -12,34 +16,43 @@ if [ -z "$IMAGE_NAME" ] || [ -z "$DATE" ]; then
     exit 1
 fi
 
-# Extract repository name (e.g., "richleigh/dynipupdate" -> "richleigh" and "dynipupdate")
-REPO_OWNER=$(echo "$IMAGE_NAME" | cut -d'/' -f1)
-REPO_NAME=$(echo "$IMAGE_NAME" | cut -d'/' -f2)
+HIGHEST=0
 
-# Try to get tags from Docker Hub API
-# Note: Docker Hub API has a limit of 100 results per page, but for daily tags this should be fine
-API_URL="https://hub.docker.com/v2/repositories/${REPO_OWNER}/${REPO_NAME}/tags?page_size=100"
+# Fetch all tags from remote to ensure we have the latest
+git fetch --tags --quiet 2>/dev/null || true
 
-# Fetch tags from Docker Hub
-TAGS=$(curl -s "$API_URL" 2>/dev/null | grep -o "\"name\":\"[^\"]*\"" | cut -d'"' -f4 || echo "")
+# Get all git tags matching today's date pattern (v-YYYYMMDD###)
+# We use 'v-' prefix to avoid conflicts with other version tags
+GIT_TAGS=$(git tag -l "v-${DATE}[0-9][0-9][0-9]" 2>/dev/null || echo "")
 
-# If API call failed or no tags found, start from 001
-if [ -z "$TAGS" ]; then
-    echo "001"
-    exit 0
+if [ -n "$GIT_TAGS" ]; then
+    # Extract version numbers and find highest
+    HIGHEST=$(echo "$GIT_TAGS" | sed "s/^v-${DATE}//" | sort -n | tail -1)
+    HIGHEST=$((10#$HIGHEST))
 fi
 
-# Filter tags that match today's date pattern (YYYYMMDD###)
-MATCHING_TAGS=$(echo "$TAGS" | grep "^${DATE}[0-9]\{3\}$" || true)
+# Increment and format as 3-digit number
+NEXT=$((HIGHEST + 1))
+NEXT_VERSION=$(printf "%03d" "$NEXT")
 
-if [ -z "$MATCHING_TAGS" ]; then
-    # No tags for today yet, start from 001
-    echo "001"
+# Create a git tag for this version (this is atomic and will fail if tag exists)
+TAG_NAME="v-${DATE}${NEXT_VERSION}"
+
+if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+    # Tag already exists (race condition caught!)
+    # Retry by recursively calling ourselves
+    exec "$0" "$IMAGE_NAME" "$DATE"
 else
-    # Find the highest number for today
-    HIGHEST=$(echo "$MATCHING_TAGS" | sed "s/^${DATE}//" | sort -n | tail -1)
+    # Create the tag
+    git tag "$TAG_NAME" 2>/dev/null || {
+        # Tag creation failed (another process created it first)
+        # Retry by recursively calling ourselves
+        exec "$0" "$IMAGE_NAME" "$DATE"
+    }
 
-    # Increment and format as 3-digit number
-    NEXT=$((10#$HIGHEST + 1))
-    printf "%03d" "$NEXT"
+    # Push the tag to remote (ignore failures - CI/CD will handle this)
+    git push origin "$TAG_NAME" --quiet 2>/dev/null || true
 fi
+
+# Output the version number
+echo "$NEXT_VERSION"
