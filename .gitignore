@@ -1,5 +1,6 @@
 # Go binaries
 dynipupdate
+cleanup
 *.exe
 *.exe~
 *.dll
