@@ -1,43 +1,23 @@
 # Dynamic DNS Updater for CloudFlare
 
-A lightweight Go-based dynamic DNS updater that automatically detects and updates CloudFlare DNS records with three types of IP addresses:
-
-1. **Internal IPv4** - RFC1918 private addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-2. **External IPv4** - Public-facing IPv4 address detected via DNS TXT query
-3. **External IPv6** - Public-facing IPv6 address detected via DNS TXT query
+A lightweight Go-based dynamic DNS updater that automatically detects and updates CloudFlare DNS records with automatic cleanup of stale records.
 
 ## Features
 
 - **Ultra-lightweight**: Built with Go and UPX compressed for minimal Docker image size (~2-3 MB)
-- Automatic IP address detection for all three types
+- **Automatic IP detection** for internal (RFC1918) and external (IPv4/IPv6) addresses
+- **Heartbeat system** with automatic cleanup of stale DNS records from dead containers/hosts
+- **Single binary** with both update and cleanup modes
 - CloudFlare API integration for DNS record management
-- Creates or updates DNS records as needed
-- Deletes stale DNS records when IP addresses are no longer available
 - Static binary with no runtime dependencies
 - Docker containerization for easy deployment
 - Configuration via environment variables
-- Comprehensive logging
 
-## How It Works
-
-### IP Detection Methods
+## IP Detection Methods
 
 - **Internal IPv4**: Scans network interfaces for RFC1918 private IP addresses
-- **External IPv4**: Queries `o-o.myaddr.l.google.com` TXT record via IPv4 DNS servers
-- **External IPv6**: Queries `o-o.myaddr.l.google.com` TXT record via IPv6 DNS servers
-
-### CloudFlare Integration
-
-The script uses the CloudFlare REST API to:
-1. Check if DNS records exist
-2. Create new records if they don't exist
-3. Update existing records with current IP addresses
-
-## Requirements
-
-- Docker (for containerized deployment) or Go 1.21+ (for building from source)
-- CloudFlare account with API token
-- Network connectivity for IPv4 and/or IPv6 (as needed)
+- **External IPv4**: Queries multiple services via IPv4 DNS (ipify, icanhazip, etc.)
+- **External IPv6**: Queries multiple services via IPv6 DNS
 
 ## Configuration
 
@@ -54,8 +34,6 @@ All configuration is done via environment variables. See `.env.example` for a co
 | `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `host.ipv6.example.com`) |
 | `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `host.example.com`) - **use this!** |
 
-**Important:** Specify the EXACT full domain names you want created. Works with CloudFlare, Route53, or any DNS provider.
-
 **Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
 - From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
 - From the internet: resolves to external IPv4 and IPv6
@@ -67,92 +45,119 @@ All configuration is done via environment variables. See `.env.example` for a co
 |----------|-------------|---------|
 | `INSTANCE_ID` | Identifier for heartbeat records | Machine hostname |
 | `CF_PROXIED` | Proxy through CloudFlare (true/false) | `false` |
+| `STALE_THRESHOLD_SECONDS` | Cleanup: Age before records are stale | `3600` (1 hour) |
+| `CLEANUP_INTERVAL_SECONDS` | Cleanup: How often to check | `300` (5 minutes) |
 
 ## Usage
 
-### Docker Deployment (Recommended)
+### Update Mode (Default)
 
-1. Build the Docker image:
-```bash
-docker build -t dynip-updater .
-```
-
-2. Run the container with environment variables:
-```bash
-docker run --rm \
-  -e CF_API_TOKEN=your_token \
-  -e CF_ZONE_ID=your_zone_id \
-  -e INTERNAL_DOMAIN=anubis.i.4.bees.wtf \
-  -e EXTERNAL_DOMAIN=anubis.e.4.bees.wtf \
-  -e IPV6_DOMAIN=anubis.6.bees.wtf \
-  -e COMBINED_DOMAIN=anubis.bees.wtf \
-  dynip-updater
-```
-
-**Examples:**
-```bash
-  -e INTERNAL_DOMAIN=anubis.i.4.bees.wtf      # Creates: anubis.i.4.bees.wtf
-  -e EXTERNAL_DOMAIN=anubis.e.4.bees.wtf      # Creates: anubis.e.4.bees.wtf
-  -e IPV6_DOMAIN=anubis.6.bees.wtf            # Creates: anubis.6.bees.wtf
-  -e COMBINED_DOMAIN=anubis.bees.wtf          # Creates: anubis.bees.wtf (use this!)
-```
-
-Then `ssh anubis.bees.wtf` works from anywhere!
-
-3. Or use an environment file:
-```bash
-# Create .env file from example
-cp .env.example .env
-# Edit .env with your values
-nano .env
-
-# Run with env file
-docker run --rm --env-file .env dynip-updater
-```
-
-### Scheduled Updates with Docker
-
-Use cron or a scheduler to run periodically:
+Run once to update DNS records with current IPs:
 
 ```bash
-# Run every 5 minutes via cron
-*/5 * * * * docker run --rm --env-file /path/to/.env dynip-updater
+docker run --rm --env-file .env dynipupdate
 ```
 
-Or use docker-compose with a restart policy:
+Typically scheduled with cron:
+```bash
+*/5 * * * * docker run --rm --env-file /path/to/.env dynipupdate
+```
+
+### Cleanup Mode
+
+Run as a long-running service to automatically remove stale DNS records:
+
+```bash
+docker run --rm --env-file .env dynipupdate -cleanup
+```
+
+The cleanup service:
+- Monitors heartbeat TXT records created by the updater
+- Deletes DNS records when heartbeats are missing or stale
+- Runs continuously, checking at `CLEANUP_INTERVAL_SECONDS`
+
+**Deploy ONCE per environment** (not per host). The cleanup service monitors all records.
+
+## Docker Deployment
+
+### Using docker-compose
 
 ```yaml
 version: '3.8'
 services:
-  dynip-updater:
-    build: .
+  # DNS updater - run on every host/container
+  dns-updater:
+    image: richleigh/dynipupdate:latest
+    network_mode: host
     env_file: .env
     restart: always
-    # Run every 5 minutes
-    entrypoint: |
-      sh -c 'while true; do /dynip-updater; sleep 300; done'
+    entrypoint: sh -c 'while true; do /dynipupdate; sleep 300; done'
+
+  # DNS cleanup - run ONCE per environment
+  dns-cleanup:
+    image: richleigh/dynipupdate:latest
+    env_file: .env
+    restart: always
+    command: ["-cleanup"]
 ```
 
-### Direct Go Usage
+## How Heartbeat Cleanup Works
 
-1. Build the binary:
-```bash
-go build -o dynip-updater main.go
+When the updater creates internal or combined domain records, it also creates a heartbeat TXT record:
+
+```
+# A record for the IP
+internal.example.com A 192.168.1.10
+
+# Heartbeat TXT record
+_heartbeat.internal.example.com TXT "1699564820,web-container-abc123"
 ```
 
-2. Set environment variables:
+The heartbeat contains:
+- **Unix timestamp**: When the heartbeat was last updated
+- **Instance ID**: Identifier for the host/container
+
+The cleanup service:
+1. Checks heartbeat TXT records for each domain
+2. If heartbeat is missing or older than threshold, deletes both DNS and heartbeat records
+3. Works for ephemeral containers that crash without cleanup
+
+## Building
+
+### Multi-Platform Docker Build
+
 ```bash
-export CF_API_TOKEN=your_token
-export CF_ZONE_ID=your_zone_id
-export INTERNAL_DOMAIN=host.internal.example.com
-export EXTERNAL_DOMAIN=host.external.example.com
-export IPV6_DOMAIN=host.ipv6.example.com
-export COMBINED_DOMAIN=host.example.com  # The one you'll actually use!
+# Set your Docker Hub username
+export DOCKER_USERNAME=your-username
+
+# Build and push multi-platform images
+make build-push
 ```
 
-3. Run the binary:
+Supports: `linux/amd64`, `linux/arm64`, `linux/ppc64le`, `linux/s390x`, `linux/riscv64`
+
+### Version Tags
+
+Images are tagged with:
+- `:latest` - Most recent build
+- `:YYYYMMDD-HHMMSS` - Git commit timestamp
+
+### Build Targets
+
 ```bash
-./dynip-updater
+make build       # Build images (no push)
+make push        # Push previously built images
+make build-push  # Build and push in one step
+make test        # Run Go unit tests
+make clean       # Clean build artifacts
+```
+
+### Local Go Build
+
+```bash
+go build -o dynipupdate main.go
+./dynipupdate        # Update mode
+./dynipupdate -cleanup  # Cleanup mode
 ```
 
 ## CloudFlare API Token Setup
@@ -164,35 +169,98 @@ export COMBINED_DOMAIN=host.example.com  # The one you'll actually use!
    - Zone Resources: `Include > Specific zone > your-domain.com`
 4. Copy the generated token and use it as `CF_API_TOKEN`
 
-## Finding Your Zone ID
+## GitHub Actions CI/CD
 
-1. Log in to CloudFlare dashboard
-2. Select your domain
-3. Scroll down on the Overview page
-4. Find "Zone ID" in the API section on the right sidebar
+This project includes GitHub Actions for automatic multi-platform builds on merge to main.
 
-## Logging
+### Setup
 
-The script outputs detailed logs including:
-- IP addresses detected
-- DNS records created/updated
-- Any errors encountered
+1. Create a Docker Hub access token at https://hub.docker.com/
+2. Add GitHub Secrets:
+   - `DOCKER_USERNAME`: Your Docker Hub username
+   - `DOCKER_TOKEN`: The access token from step 1
+3. Merge PRs to main - images are automatically built and pushed
 
-Log levels:
-- `INFO`: Normal operation
-- `WARNING`: Non-critical issues (e.g., no IPv6 connectivity)
-- `ERROR`: Critical failures
+Workflow runs:
+- On push to `main` or `master`
+- Manually via "Run workflow" in Actions tab
 
-## Exit Codes
+## Scheduling
 
-- `0`: All updates successful
-- `1`: Some or all updates failed
+Run the updater periodically to keep DNS records fresh:
+
+### Cron (Linux/macOS)
+```bash
+*/5 * * * * docker run --rm --env-file /path/to/.env dynipupdate
+```
+
+### systemd Timer (Linux)
+
+Create `/etc/systemd/system/dynipupdate.timer`:
+```ini
+[Unit]
+Description=Dynamic DNS Updater Timer
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+Create `/etc/systemd/system/dynipupdate.service`:
+```ini
+[Unit]
+Description=Dynamic DNS Updater
+
+[Service]
+Type=oneshot
+EnvironmentFile=/path/to/.env
+ExecStart=/usr/local/bin/dynipupdate
+```
+
+Enable:
+```bash
+sudo systemctl enable --now dynipupdate.timer
+```
+
+### macOS Launch Agent
+
+Create `~/Library/LaunchAgents/com.user.dynipupdate.plist`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.dynipupdate</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/dynipupdate</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CF_API_TOKEN</key>
+        <string>your_token_here</string>
+        <!-- Add other env vars -->
+    </dict>
+    <key>StartInterval</key>
+    <integer>300</integer>
+</dict>
+</plist>
+```
+
+Load:
+```bash
+launchctl load ~/Library/LaunchAgents/com.user.dynipupdate.plist
+```
 
 ## Troubleshooting
 
 ### No Internal IPv4 Detected
 - Ensure the host has a network interface with an RFC1918 address
-- Check that the container has access to host networking if needed
+- For Docker: use `--network host` mode
 
 ### No External IPv4/IPv6 Detected
 - Verify internet connectivity
@@ -204,16 +272,11 @@ Log levels:
 - Check Zone ID is correct
 - Ensure the domain is active in CloudFlare
 
-### Docker Networking Issues
-- For internal IP detection, may need `--network host` mode:
-```bash
-docker run --rm --network host --env-file .env dynip-updater
-```
+## Exit Codes
+
+- `0`: All updates successful
+- `1`: Some or all updates failed
 
 ## License
 
 MIT License - feel free to use and modify as needed.
-
-## Contributing
-
-Issues and pull requests welcome!
