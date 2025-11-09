@@ -91,8 +91,11 @@ func main() {
 
 	// Update internal IPv4 records (support multiple addresses)
 	if len(ips.InternalIPv4) > 0 {
-		// Get all existing records for the internal domain
-		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
+		// Construct the service-specific domain name
+		serviceDomain := serviceDomainName(config.InstanceID, config.InternalDomain)
+
+		// Get all existing records for this service's domain
+		existingRecords := cf.getAllRecords(serviceDomain, "A")
 
 		// Create a map of existing record contents for quick lookup
 		existingIPs := make(map[string]string) // content -> recordID
@@ -109,18 +112,18 @@ func main() {
 		// Create/update records for each detected IP
 		for _, ip := range ips.InternalIPv4 {
 			totalCount++
-			if cf.ensureRecordExists(config.InternalDomain, "A", ip, config.Proxied) {
+			if cf.ensureRecordExists(serviceDomain, "A", ip, config.Proxied) {
 				successCount++
 			}
+		}
 
-			// Create/update heartbeat TXT record for this IP
-			heartbeatName := heartbeatRecordName(ip, config.InternalDomain)
-			heartbeatData := heartbeatContent(config.InstanceID)
-			totalCount++
-			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-				successCount++
-				log.Printf("Updated heartbeat for IP %s", ip)
-			}
+		// Create/update ONE heartbeat for the entire service (not per IP)
+		heartbeatName := heartbeatRecordName(config.InstanceID, config.InternalDomain)
+		heartbeatData := heartbeatContent(config.InstanceID)
+		totalCount++
+		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+			successCount++
+			log.Printf("Updated heartbeat for service %s", config.InstanceID)
 		}
 
 		// Delete stale records (IPs that exist in DNS but not in detected list)
@@ -128,65 +131,44 @@ func main() {
 			if !detectedIPs[content] {
 				totalCount++
 				log.Printf("Deleting stale internal IPv4 record: %s", content)
-				if cf.deleteRecord(recordID, config.InternalDomain, "A") {
+				if cf.deleteRecord(recordID, serviceDomain, "A") {
 					successCount++
-				}
-
-				// Also delete the heartbeat TXT record
-				heartbeatName := heartbeatRecordName(content, config.InternalDomain)
-				totalCount++
-				if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-					successCount++
-					log.Printf("Deleted heartbeat for stale IP %s", content)
 				}
 			}
 		}
 	} else {
-		// No internal IPs found - delete all existing records
-		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
+		// No internal IPs found - delete all existing records and heartbeat
+		serviceDomain := serviceDomainName(config.InstanceID, config.InternalDomain)
+		existingRecords := cf.getAllRecords(serviceDomain, "A")
 		for _, record := range existingRecords {
 			totalCount++
 			log.Printf("No internal IPv4 addresses found - deleting record: %s", record.Content)
-			if cf.deleteRecord(record.ID, config.InternalDomain, "A") {
+			if cf.deleteRecord(record.ID, serviceDomain, "A") {
 				successCount++
 			}
+		}
 
-			// Also delete the heartbeat TXT record
-			heartbeatName := heartbeatRecordName(record.Content, config.InternalDomain)
-			totalCount++
-			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-				successCount++
-				log.Printf("Deleted heartbeat for IP %s", record.Content)
-			}
+		// Delete the service heartbeat
+		heartbeatName := heartbeatRecordName(config.InstanceID, config.InternalDomain)
+		totalCount++
+		if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+			successCount++
+			log.Printf("Deleted heartbeat for service %s", config.InstanceID)
 		}
 	}
 
 	// Update external IPv4 record
 	totalCount++
 	if ips.ExternalIPv4 != "" {
-		if cf.upsertRecord(config.ExternalDomain, "A", ips.ExternalIPv4, config.Proxied) {
+		serviceDomain := serviceDomainName(config.InstanceID, config.ExternalDomain)
+		if cf.upsertRecord(serviceDomain, "A", ips.ExternalIPv4, config.Proxied) {
 			successCount++
-		}
-		// Create heartbeat for external IPv4
-		heartbeatName := heartbeatRecordName(ips.ExternalIPv4, config.ExternalDomain)
-		heartbeatData := heartbeatContent(config.InstanceID)
-		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-			successCount++
-			log.Printf("Updated heartbeat for external IPv4 %s", ips.ExternalIPv4)
+			log.Printf("Updated external IPv4: %s -> %s", serviceDomain, ips.ExternalIPv4)
 		}
 	} else {
 		log.Println("No external IPv4 address found - deleting any existing record")
-		// Get existing record to delete its heartbeat
-		existingRecords := cf.getAllRecords(config.ExternalDomain, "A")
-		for _, record := range existingRecords {
-			// Delete heartbeat first
-			heartbeatName := heartbeatRecordName(record.Content, config.ExternalDomain)
-			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-				successCount++
-				log.Printf("Deleted heartbeat for external IPv4 %s", record.Content)
-			}
-		}
-		if cf.deleteRecordIfExists(config.ExternalDomain, "A") {
+		serviceDomain := serviceDomainName(config.InstanceID, config.ExternalDomain)
+		if cf.deleteRecordIfExists(serviceDomain, "A") {
 			successCount++
 		}
 	}
@@ -194,36 +176,23 @@ func main() {
 	// Update external IPv6 record
 	totalCount++
 	if ips.ExternalIPv6 != "" {
-		if cf.upsertRecord(config.IPv6Domain, "AAAA", ips.ExternalIPv6, config.Proxied) {
+		serviceDomain := serviceDomainName(config.InstanceID, config.IPv6Domain)
+		if cf.upsertRecord(serviceDomain, "AAAA", ips.ExternalIPv6, config.Proxied) {
 			successCount++
-		}
-		// Create heartbeat for external IPv6
-		heartbeatName := heartbeatRecordName(ips.ExternalIPv6, config.IPv6Domain)
-		heartbeatData := heartbeatContent(config.InstanceID)
-		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-			successCount++
-			log.Printf("Updated heartbeat for external IPv6 %s", ips.ExternalIPv6)
+			log.Printf("Updated external IPv6: %s -> %s", serviceDomain, ips.ExternalIPv6)
 		}
 	} else {
 		log.Println("No external IPv6 address found - deleting any existing record")
-		// Get existing record to delete its heartbeat
-		existingRecords := cf.getAllRecords(config.IPv6Domain, "AAAA")
-		for _, record := range existingRecords {
-			// Delete heartbeat first
-			heartbeatName := heartbeatRecordName(record.Content, config.IPv6Domain)
-			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-				successCount++
-				log.Printf("Deleted heartbeat for external IPv6 %s", record.Content)
-			}
-		}
-		if cf.deleteRecordIfExists(config.IPv6Domain, "AAAA") {
+		serviceDomain := serviceDomainName(config.InstanceID, config.IPv6Domain)
+		if cf.deleteRecordIfExists(serviceDomain, "AAAA") {
 			successCount++
 		}
 	}
 
 	// Update combined domain (all IPs aggregated into one domain)
 	if config.CombinedDomain != "" {
-		log.Printf("Updating combined domain: %s", config.CombinedDomain)
+		serviceDomain := serviceDomainName(config.InstanceID, config.CombinedDomain)
+		log.Printf("Updating combined domain: %s", serviceDomain)
 
 		// Collect all IPv4 addresses (internal + external)
 		var allIPv4s []string
@@ -235,7 +204,7 @@ func main() {
 		// Update A records for all IPv4s
 		if len(allIPv4s) > 0 {
 			// Get all existing A records for the combined domain
-			existingRecords := cf.getAllRecords(config.CombinedDomain, "A")
+			existingRecords := cf.getAllRecords(serviceDomain, "A")
 
 			// Create a map of existing record contents for quick lookup
 			existingIPs := make(map[string]string) // content -> recordID
@@ -252,17 +221,8 @@ func main() {
 			// Create/update records for each IPv4
 			for _, ip := range allIPv4s {
 				totalCount++
-				if cf.ensureRecordExists(config.CombinedDomain, "A", ip, config.Proxied) {
+				if cf.ensureRecordExists(serviceDomain, "A", ip, config.Proxied) {
 					successCount++
-				}
-
-				// Create/update heartbeat TXT record for this IP
-				heartbeatName := heartbeatRecordName(ip, config.CombinedDomain)
-				heartbeatData := heartbeatContent(config.InstanceID)
-				totalCount++
-				if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-					successCount++
-					log.Printf("Updated heartbeat for IP %s on combined domain", ip)
 				}
 			}
 
@@ -271,35 +231,19 @@ func main() {
 				if !detectedIPs[content] {
 					totalCount++
 					log.Printf("Deleting stale combined domain A record: %s", content)
-					if cf.deleteRecord(recordID, config.CombinedDomain, "A") {
+					if cf.deleteRecord(recordID, serviceDomain, "A") {
 						successCount++
-					}
-
-					// Also delete the heartbeat TXT record
-					heartbeatName := heartbeatRecordName(content, config.CombinedDomain)
-					totalCount++
-					if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-						successCount++
-						log.Printf("Deleted heartbeat for stale IP %s on combined domain", content)
 					}
 				}
 			}
 		} else {
 			// No IPv4s found - delete all A records
-			existingRecords := cf.getAllRecords(config.CombinedDomain, "A")
+			existingRecords := cf.getAllRecords(serviceDomain, "A")
 			for _, record := range existingRecords {
 				totalCount++
 				log.Printf("No IPv4 addresses found - deleting combined domain A record: %s", record.Content)
-				if cf.deleteRecord(record.ID, config.CombinedDomain, "A") {
+				if cf.deleteRecord(record.ID, serviceDomain, "A") {
 					successCount++
-				}
-
-				// Also delete the heartbeat TXT record
-				heartbeatName := heartbeatRecordName(record.Content, config.CombinedDomain)
-				totalCount++
-				if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-					successCount++
-					log.Printf("Deleted heartbeat for IP %s on combined domain", record.Content)
 				}
 			}
 		}
@@ -307,12 +251,13 @@ func main() {
 		// Update AAAA record for external IPv6
 		totalCount++
 		if ips.ExternalIPv6 != "" {
-			if cf.upsertRecord(config.CombinedDomain, "AAAA", ips.ExternalIPv6, config.Proxied) {
+			if cf.upsertRecord(serviceDomain, "AAAA", ips.ExternalIPv6, config.Proxied) {
 				successCount++
+				log.Printf("Updated combined domain IPv6: %s -> %s", serviceDomain, ips.ExternalIPv6)
 			}
 		} else {
 			log.Println("No external IPv6 address found - deleting combined domain AAAA record")
-			if cf.deleteRecordIfExists(config.CombinedDomain, "AAAA") {
+			if cf.deleteRecordIfExists(serviceDomain, "AAAA") {
 				successCount++
 			}
 		}
@@ -371,16 +316,22 @@ func max(a, b int) int {
 	return b
 }
 
-// ipToDNSLabel converts an IP address to a DNS-safe label
-// Example: "192.168.1.10" -> "192-168-1-10"
-func ipToDNSLabel(ip string) string {
-	return strings.ReplaceAll(ip, ".", "-")
+// serviceDomainName constructs the full domain name for a service
+// Example: "web-prod-1", "internal.example.com" -> "web-prod-1.internal.example.com"
+func serviceDomainName(instanceID, baseDomain string) string {
+	if baseDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s", instanceID, baseDomain)
 }
 
-// heartbeatRecordName creates the TXT record name for a heartbeat
-// Example: "192.168.1.10", "internal.example.com" -> "_heartbeat-192-168-1-10.internal.example.com"
-func heartbeatRecordName(ip, baseDomain string) string {
-	return fmt.Sprintf("_heartbeat-%s.%s", ipToDNSLabel(ip), baseDomain)
+// heartbeatRecordName creates the TXT record name for a service heartbeat
+// Example: "web-prod-1", "internal.example.com" -> "_heartbeat.web-prod-1.internal.example.com"
+func heartbeatRecordName(instanceID, baseDomain string) string {
+	if baseDomain == "" {
+		return ""
+	}
+	return fmt.Sprintf("_heartbeat.%s.%s", instanceID, baseDomain)
 }
 
 // heartbeatContent creates the TXT record content with current timestamp and instance ID
