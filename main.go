@@ -61,6 +61,7 @@ type Config struct {
 	InternalDomain string
 	ExternalDomain string
 	IPv6Domain     string
+	CombinedDomain string
 	Proxied        bool
 }
 
@@ -107,7 +108,7 @@ func main() {
 		// Create/update records for each detected IP
 		for _, ip := range ips.InternalIPv4 {
 			totalCount++
-			if cf.upsertRecord(config.InternalDomain, "A", ip, config.Proxied) {
+			if cf.ensureRecordExists(config.InternalDomain, "A", ip, config.Proxied) {
 				successCount++
 			}
 		}
@@ -160,6 +161,78 @@ func main() {
 		}
 	}
 
+	// Update combined domain (all IPs aggregated into one domain)
+	if config.CombinedDomain != "" {
+		log.Printf("Updating combined domain: %s", config.CombinedDomain)
+
+		// Collect all IPv4 addresses (internal + external)
+		var allIPv4s []string
+		allIPv4s = append(allIPv4s, ips.InternalIPv4...)
+		if ips.ExternalIPv4 != "" {
+			allIPv4s = append(allIPv4s, ips.ExternalIPv4)
+		}
+
+		// Update A records for all IPv4s
+		if len(allIPv4s) > 0 {
+			// Get all existing A records for the combined domain
+			existingRecords := cf.getAllRecords(config.CombinedDomain, "A")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range allIPv4s {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each IPv4
+			for _, ip := range allIPv4s {
+				totalCount++
+				if cf.ensureRecordExists(config.CombinedDomain, "A", ip, config.Proxied) {
+					successCount++
+				}
+			}
+
+			// Delete stale A records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale combined domain A record: %s", content)
+					if cf.deleteRecord(recordID, config.CombinedDomain, "A") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPv4s found - delete all A records
+			existingRecords := cf.getAllRecords(config.CombinedDomain, "A")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPv4 addresses found - deleting combined domain A record: %s", record.Content)
+				if cf.deleteRecord(record.ID, config.CombinedDomain, "A") {
+					successCount++
+				}
+			}
+		}
+
+		// Update AAAA record for external IPv6
+		totalCount++
+		if ips.ExternalIPv6 != "" {
+			if cf.upsertRecord(config.CombinedDomain, "AAAA", ips.ExternalIPv6, config.Proxied) {
+				successCount++
+			}
+		} else {
+			log.Println("No external IPv6 address found - deleting combined domain AAAA record")
+			if cf.deleteRecordIfExists(config.CombinedDomain, "AAAA") {
+				successCount++
+			}
+		}
+	}
+
 	// Report results
 	log.Printf("Completed: %d/%d records updated successfully\n", successCount, totalCount)
 
@@ -199,6 +272,7 @@ func loadConfig() *Config {
 	config.InternalDomain = getEnvOrDefault("INTERNAL_DOMAIN", config.Hostname)
 	config.ExternalDomain = getEnvOrDefault("EXTERNAL_DOMAIN", config.Hostname)
 	config.IPv6Domain = getEnvOrDefault("IPV6_DOMAIN", config.Hostname)
+	config.CombinedDomain = getEnvOrDefault("COMBINED_DOMAIN", "")
 	config.Proxied = strings.ToLower(os.Getenv("CF_PROXIED")) == "true"
 
 	return config
@@ -402,6 +476,7 @@ type CloudFlareAPI interface {
 	deleteRecord(recordID, name, recordType string) bool
 	deleteRecordIfExists(name, recordType string) bool
 	upsertRecord(name, recordType, content string, proxied bool) bool
+	ensureRecordExists(name, recordType, content string, proxied bool) bool
 }
 
 // CloudFlareClient handles CloudFlare API interactions
@@ -669,5 +744,22 @@ func (cf *CloudFlareClient) upsertRecord(name, recordType, content string, proxi
 		log.Printf("Content changed for %s record %s: %s -> %s", recordType, name, record.Content, content)
 		return cf.updateRecord(record.ID, name, recordType, content, proxied)
 	}
+	return cf.createRecord(name, recordType, content, proxied)
+}
+
+// ensureRecordExists creates a record only if one with this exact content doesn't already exist.
+// This is used for domains with multiple records of the same type (e.g., multiple A records).
+func (cf *CloudFlareClient) ensureRecordExists(name, recordType, content string, proxied bool) bool {
+	allRecords := cf.getAllRecords(name, recordType)
+
+	// Check if a record with this specific content already exists
+	for _, record := range allRecords {
+		if record.Content == content {
+			log.Printf("No change needed for %s record %s (already %s)", recordType, name, content)
+			return true
+		}
+	}
+
+	// Record with this content doesn't exist - create it
 	return cf.createRecord(name, recordType, content, proxied)
 }

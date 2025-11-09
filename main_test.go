@@ -357,11 +357,24 @@ func (m *MockCloudFlareClient) upsertRecord(name, recordType, content string, pr
 	if record != nil {
 		// Record exists - check if content has changed
 		if record.Content == content {
-			// No change needed
 			return true
 		}
 		return m.updateRecord(record.ID, name, recordType, content, proxied)
 	}
+	return m.createRecord(name, recordType, content, proxied)
+}
+
+func (m *MockCloudFlareClient) ensureRecordExists(name, recordType, content string, proxied bool) bool {
+	allRecords := m.getAllRecords(name, recordType)
+
+	// Check if a record with this specific content already exists
+	for _, record := range allRecords {
+		if record.Content == content {
+			return true
+		}
+	}
+
+	// Record with this content doesn't exist - create it
 	return m.createRecord(name, recordType, content, proxied)
 }
 
@@ -609,5 +622,208 @@ func TestNoInternalIPsDeletesAll(t *testing.T) {
 
 	if mock.deleteCalled != 2 {
 		t.Errorf("Expected deleteRecord to be called twice, but was called %d times", mock.deleteCalled)
+	}
+}
+
+// TestCombinedDomainAllIPv4s verifies that combined domain aggregates internal + external IPv4s
+func TestCombinedDomainAllIPv4s(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+	}
+
+	// Simulate internal IPs: 192.168.1.10, 10.0.0.5
+	// Simulate external IP: 203.0.113.50
+	internalIPs := []string{"192.168.1.10", "10.0.0.5"}
+	externalIP := "203.0.113.50"
+
+	// Collect all IPv4s (simulating the logic in main())
+	var allIPv4s []string
+	allIPv4s = append(allIPv4s, internalIPs...)
+	allIPv4s = append(allIPv4s, externalIP)
+
+	// Create A records for all IPv4s
+	for _, ip := range allIPv4s {
+		if !mock.createRecord("combined.example.com", "A", ip, false) {
+			t.Fatalf("Failed to create A record for %s", ip)
+		}
+	}
+
+	// Verify all A records were created
+	allRecords := mock.getAllRecords("combined.example.com", "A")
+	if len(allRecords) != 3 {
+		t.Errorf("Expected 3 A records, got %d", len(allRecords))
+	}
+
+	// Verify each IP is present
+	recordIPs := make(map[string]bool)
+	for _, record := range allRecords {
+		recordIPs[record.Content] = true
+	}
+
+	expectedIPs := []string{"192.168.1.10", "10.0.0.5", "203.0.113.50"}
+	for _, ip := range expectedIPs {
+		if !recordIPs[ip] {
+			t.Errorf("Expected to find A record for IP %s", ip)
+		}
+	}
+}
+
+// TestCombinedDomainWithIPv6 verifies that combined domain includes both A and AAAA records
+func TestCombinedDomainWithIPv6(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+	}
+
+	// Create A records for IPv4s
+	mock.createRecord("combined.example.com", "A", "192.168.1.10", false)
+	mock.createRecord("combined.example.com", "A", "203.0.113.50", false)
+
+	// Create AAAA record for IPv6
+	mock.createRecord("combined.example.com", "AAAA", "2001:db8::1", false)
+
+	// Verify A records
+	aRecords := mock.getAllRecords("combined.example.com", "A")
+	if len(aRecords) != 2 {
+		t.Errorf("Expected 2 A records, got %d", len(aRecords))
+	}
+
+	// Verify AAAA record
+	aaaaRecords := mock.getAllRecords("combined.example.com", "AAAA")
+	if len(aaaaRecords) != 1 {
+		t.Errorf("Expected 1 AAAA record, got %d", len(aaaaRecords))
+	}
+
+	if aaaaRecords[0].Content != "2001:db8::1" {
+		t.Errorf("Expected AAAA record content to be 2001:db8::1, got %s", aaaaRecords[0].Content)
+	}
+}
+
+// TestCombinedDomainStaleCleanup verifies stale records are cleaned from combined domain
+func TestCombinedDomainStaleCleanup(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+	}
+
+	// Create initial records (3 internal IPs + 1 external)
+	mock.records["combined.example.com:A"] = []*CFRecord{
+		{ID: "test-301", Type: "A", Name: "combined.example.com", Content: "192.168.1.10"},
+		{ID: "test-302", Type: "A", Name: "combined.example.com", Content: "10.0.0.5"},
+		{ID: "test-303", Type: "A", Name: "combined.example.com", Content: "172.16.5.20"},
+		{ID: "test-304", Type: "A", Name: "combined.example.com", Content: "203.0.113.50"}, // external
+	}
+
+	// Simulate new state: one internal IP disappeared, external IP changed
+	newIPv4s := []string{
+		"192.168.1.10", // still present
+		"10.0.0.5",     // still present
+		// 172.16.5.20 is gone (interface down)
+		"203.0.113.99", // external IP changed
+	}
+
+	// Get existing records
+	existingRecords := mock.getAllRecords("combined.example.com", "A")
+	if len(existingRecords) != 4 {
+		t.Fatalf("Expected 4 initial records, got %d", len(existingRecords))
+	}
+
+	// Build map of existing IPs
+	existingIPs := make(map[string]string) // content -> recordID
+	for _, record := range existingRecords {
+		existingIPs[record.Content] = record.ID
+	}
+
+	// Build map of detected IPs
+	detectedIPs := make(map[string]bool)
+	for _, ip := range newIPv4s {
+		detectedIPs[ip] = true
+	}
+
+	// Ensure new IPs exist (using ensureRecordExists for multi-record scenario)
+	for _, ip := range newIPv4s {
+		mock.ensureRecordExists("combined.example.com", "A", ip, false)
+	}
+
+	// Delete stale records
+	deletedCount := 0
+	for content, recordID := range existingIPs {
+		if !detectedIPs[content] {
+			if mock.deleteRecord(recordID, "combined.example.com", "A") {
+				deletedCount++
+			}
+		}
+	}
+
+	// Verify 2 stale records were deleted (172.16.5.20 and old external 203.0.113.50)
+	if deletedCount != 2 {
+		t.Errorf("Expected 2 stale records to be deleted, deleted %d", deletedCount)
+	}
+
+	// Verify remaining records
+	remainingRecords := mock.getAllRecords("combined.example.com", "A")
+	if len(remainingRecords) != 3 {
+		t.Errorf("Expected 3 remaining records, got %d", len(remainingRecords))
+	}
+
+	// Verify the correct IPs remain
+	foundIPs := make(map[string]bool)
+	for _, record := range remainingRecords {
+		foundIPs[record.Content] = true
+	}
+
+	expectedRemaining := []string{"192.168.1.10", "10.0.0.5", "203.0.113.99"}
+	for _, ip := range expectedRemaining {
+		if !foundIPs[ip] {
+			t.Errorf("Expected IP %s to remain", ip)
+		}
+	}
+
+	// Verify stale IPs are gone
+	if foundIPs["172.16.5.20"] {
+		t.Error("Expected stale IP 172.16.5.20 to be deleted")
+	}
+	if foundIPs["203.0.113.50"] {
+		t.Error("Expected old external IP 203.0.113.50 to be deleted")
+	}
+}
+
+// TestCombinedDomainEmptyIPs verifies all records deleted when no IPs detected
+func TestCombinedDomainEmptyIPs(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string][]*CFRecord),
+	}
+
+	// Create initial records
+	mock.records["combined.example.com:A"] = []*CFRecord{
+		{ID: "test-401", Type: "A", Name: "combined.example.com", Content: "192.168.1.10"},
+		{ID: "test-402", Type: "A", Name: "combined.example.com", Content: "203.0.113.50"},
+	}
+	mock.records["combined.example.com:AAAA"] = []*CFRecord{
+		{ID: "test-403", Type: "AAAA", Name: "combined.example.com", Content: "2001:db8::1"},
+	}
+
+	// Simulate no IPs detected (all interfaces down)
+	existingARecords := mock.getAllRecords("combined.example.com", "A")
+	for _, record := range existingARecords {
+		mock.deleteRecord(record.ID, "combined.example.com", "A")
+	}
+
+	existingAAAARecords := mock.getAllRecords("combined.example.com", "AAAA")
+	for _, record := range existingAAAARecords {
+		mock.deleteRecord(record.ID, "combined.example.com", "AAAA")
+	}
+
+	// Verify all records were deleted
+	remainingARecords := mock.getAllRecords("combined.example.com", "A")
+	if len(remainingARecords) != 0 {
+		t.Errorf("Expected 0 remaining A records, got %d", len(remainingARecords))
+	}
+
+	remainingAAAARecords := mock.getAllRecords("combined.example.com", "AAAA")
+	if len(remainingAAAARecords) != 0 {
+		t.Errorf("Expected 0 remaining AAAA records, got %d", len(remainingAAAARecords))
+	}
+
+	if mock.deleteCalled != 3 {
+		t.Errorf("Expected deleteRecord to be called 3 times, but was called %d times", mock.deleteCalled)
 	}
 }
