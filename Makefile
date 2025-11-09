@@ -152,6 +152,13 @@ build-push: check-docker-username test
 
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f dynipupdate
+	rm -f dynipupdate cleanup
 	go clean
 	@echo "✓ Clean complete"
+
+# Build binaries directly without Docker (for development/testing)
+build-local:
+	@echo "Building Go binaries..."
+	go build -o dynipupdate .
+	go build -o cleanup ./cmd/cleanup
+	@echo "✓ Binaries built: ./dynipupdate and ./cleanup"
