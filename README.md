@@ -106,11 +106,11 @@ When the updater runs, it creates/updates a heartbeat TXT record **at the same d
 
 ```
 # Multiple A records for the IPs
-internal.example.com A 192.168.1.10
-internal.example.com A 192.168.1.11
+anubis.i.4.bees.wtf A 192.168.1.10
+anubis.i.4.bees.wtf A 192.168.1.11
 
 # ONE heartbeat TXT record (same name, different type)
-internal.example.com TXT "1699564820"
+anubis.i.4.bees.wtf TXT "1699564820"
 ```
 
 The heartbeat TXT record contains:
@@ -119,10 +119,16 @@ The heartbeat TXT record contains:
 
 **How it works:**
 1. Each time the updater runs, it updates the TXT record with the current timestamp
-2. The cleanup service periodically checks the TXT record at each domain
-3. If the TXT record is missing or older than threshold (default: 1 hour), cleanup knows the updater process died
-4. Cleanup then deletes ALL records for that domain (A/AAAA and TXT)
-5. This weeds out processes/containers hanging around for no good reason
+2. The cleanup service scans **all TXT records in the zone** to discover heartbeats
+3. For each heartbeat, it checks if the timestamp is stale (default: older than 1 hour)
+4. If stale, cleanup deletes ALL records for that domain (A/AAAA and TXT)
+5. This automatically weeds out dead processes/containers hanging around for no good reason
+
+**Key features:**
+- **Automatic discovery**: Cleanup doesn't need to know domain names in advance
+- **Zone-wide scanning**: Finds all domains with heartbeats across your entire zone
+- **Keeps DNS clean**: Any host that stops updating its heartbeat gets cleaned up
+- **Un-sanctioned removal**: Domains without valid heartbeats are automatically removed
 
 ## Building
 
