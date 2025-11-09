@@ -20,9 +20,9 @@ PLATFORMS ?= linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64
 help:
 	@echo "Dynamic DNS Updater - Build Targets"
 	@echo ""
-	@echo "  make build       - Build Docker images locally (no DOCKER_USERNAME needed)"
-	@echo "  make push        - Push previously built images to Docker Hub (requires DOCKER_USERNAME)"
-	@echo "  make build-push  - Build and push in one step (requires DOCKER_USERNAME)"
+	@echo "  make build       - Build Docker images (default: all platforms, no push)"
+	@echo "  make push        - Push previously built images to Docker Hub"
+	@echo "  make build-push  - Build and push in one step (default: all platforms)"
 	@echo "  make test        - Run Go unit tests"
 	@echo "  make version-tag - Show what the next version tag will be"
 	@echo "  make clean       - Clean build artifacts"
@@ -41,11 +41,11 @@ help:
 	@echo "  make build-push"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build                                        # Build all platforms locally"
+	@echo "  make build                                        # Build all platforms (no push)"
 	@echo "  PLATFORMS=linux/amd64 make build                  # Build just amd64 (for testing)"
 	@echo "  PLATFORMS=linux/arm64 make build                  # Build just arm64 (for testing)"
-	@echo "  make push                                         # Push what you built (needs username)"
-	@echo "  make build-push                                   # Build all platforms and push (needs username)"
+	@echo "  make push                                         # Push what you built"
+	@echo "  make build-push                                   # Build all platforms and push"
 	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build-push # Build specific platforms and push"
 
 check-docker-username:
@@ -69,7 +69,7 @@ check-docker-username:
 		exit 1; \
 	fi
 
-version-tag:
+version-tag: check-docker-username
 	@echo "Next version tag will be: $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd)"
 
 test:
@@ -78,8 +78,7 @@ test:
 
 # Build Docker images (without pushing)
 # Supports building specific platforms via PLATFORMS variable
-# Note: Does not require DOCKER_USERNAME for local builds
-build: test
+build: check-docker-username test
 	@echo "Building Docker images..."
 	@$(eval VERSION_TAG := $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd))
 	@echo "Building version: $(VERSION_TAG)"

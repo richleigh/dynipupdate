@@ -3,7 +3,6 @@ version: '3.8'
 
 services:
   # Main DNS updater - runs on each host/container
-  # IMPORTANT: Runs in a loop every 5 minutes to keep heartbeat alive
   dns-updater:
     image: richleigh/dynipupdate:latest
     container_name: dns-updater
@@ -18,18 +17,9 @@ services:
       - COMBINED_DOMAIN=${COMBINED_DOMAIN:-all.example.com}
       - INSTANCE_ID=${INSTANCE_ID:-${HOSTNAME:-unknown}}
       - CF_PROXIED=false
-      # How often to update DNS and heartbeat (in seconds)
-      - UPDATE_INTERVAL=300  # 5 minutes
     network_mode: host  # Required to detect host network interfaces
-    command: >
-      sh -c 'while true; do
-        /app/dynipupdate;
-        echo "Sleeping for $${UPDATE_INTERVAL:-300} seconds...";
-        sleep $${UPDATE_INTERVAL:-300};
-      done'
 
   # Cleanup service - runs once per environment (not per host)
-  # Deletes DNS records with stale heartbeats
   dns-cleanup:
     build:
       context: .
@@ -42,7 +32,6 @@ services:
       - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-internal.example.com}
       - COMBINED_DOMAIN=${COMBINED_DOMAIN:-all.example.com}
       # How old (in seconds) before a heartbeat is considered stale
-      # Should be 2-3x the UPDATE_INTERVAL above
-      - STALE_THRESHOLD_SECONDS=900  # 15 minutes (3x updater frequency)
+      - STALE_THRESHOLD_SECONDS=900  # 15 minutes
       # How often to run the cleanup check
       - CLEANUP_INTERVAL_SECONDS=300  # 5 minutes
