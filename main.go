@@ -40,6 +40,11 @@ type CFRecord struct {
 	Content string `json:"content"`
 }
 
+type CFError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 type CFCreateUpdateRequest struct {
 	Type    string `json:"type"`
 	Name    string `json:"name"`
@@ -374,10 +379,7 @@ func formatErrors(errors []json.RawMessage) string {
 }
 
 func (cf *CloudFlareClient) makeRequest(method, path string, body io.Reader) (*http.Response, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, method, cf.BaseURL+path, body)
+	req, err := http.NewRequest(method, cf.BaseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +392,12 @@ func (cf *CloudFlareClient) makeRequest(method, path string, body io.Reader) (*h
 	log.Printf("API Request: %s %s (token length: %d, auth header length: %d)",
 		method, path, len(cf.APIToken), len(authHeader))
 
-	resp, err := http.DefaultClient.Do(req)
+	// Use a client with timeout instead of context
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +466,23 @@ func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxi
 	if result.Success {
 		log.Printf("Created %s record for %s -> %s", recordType, name, content)
 		return true
+	}
+
+	// Check if record already exists (error code 81058)
+	for _, errRaw := range result.Errors {
+		var cfErr CFError
+		if err := json.Unmarshal(errRaw, &cfErr); err == nil {
+			if cfErr.Code == 81058 {
+				// Record already exists - try to get its ID and update instead
+				log.Printf("Record already exists for %s, attempting update...", name)
+				recordID := cf.getRecordID(name, recordType)
+				if recordID != "" {
+					return cf.updateRecord(recordID, name, recordType, content, proxied)
+				}
+				log.Printf("Failed to get record ID for existing record: %s", name)
+				return false
+			}
+		}
 	}
 
 	log.Printf("Failed to create record: %s", formatErrors(result.Errors))
