@@ -57,7 +57,6 @@ type CFCreateUpdateRequest struct {
 type Config struct {
 	CFAPIToken     string
 	CFZoneID       string
-	Hostname       string
 	InternalDomain string
 	ExternalDomain string
 	IPv6Domain     string
@@ -284,18 +283,22 @@ func loadConfig() *Config {
 	log.Printf("API token loaded (length: %d chars, starts with: %.8s..., ends with: ...%.4s)",
 		len(apiToken), apiToken, apiToken[max(0, len(apiToken)-4):])
 
-	config := &Config{
-		CFAPIToken: apiToken,
-		CFZoneID:   getEnvOrExit("CF_ZONE_ID"),
-		Hostname:   getEnvOrExit("HOSTNAME"),
+	// Get actual machine hostname for INSTANCE_ID default
+	machineHostname, err := os.Hostname()
+	if err != nil {
+		machineHostname = "unknown-host"
 	}
 
-	config.InternalDomain = getEnvOrDefault("INTERNAL_DOMAIN", config.Hostname)
-	config.ExternalDomain = getEnvOrDefault("EXTERNAL_DOMAIN", config.Hostname)
-	config.IPv6Domain = getEnvOrDefault("IPV6_DOMAIN", config.Hostname)
-	config.CombinedDomain = getEnvOrDefault("COMBINED_DOMAIN", "")
-	config.InstanceID = getEnvOrDefault("INSTANCE_ID", config.Hostname)
-	config.Proxied = strings.ToLower(os.Getenv("CF_PROXIED")) == "true"
+	config := &Config{
+		CFAPIToken:     apiToken,
+		CFZoneID:       getEnvOrExit("CF_ZONE_ID"),
+		InternalDomain: getEnvOrExit("INTERNAL_DOMAIN"),
+		ExternalDomain: getEnvOrExit("EXTERNAL_DOMAIN"),
+		IPv6Domain:     getEnvOrExit("IPV6_DOMAIN"),
+		CombinedDomain: getEnvOrExit("COMBINED_DOMAIN"),
+		InstanceID:     getEnvOrDefault("INSTANCE_ID", machineHostname),
+		Proxied:        strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
+	}
 
 	return config
 }

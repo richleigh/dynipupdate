@@ -49,15 +49,23 @@ All configuration is done via environment variables. See `.env.example` for a co
 |----------|-------------|
 | `CF_API_TOKEN` | CloudFlare API token (create at https://dash.cloudflare.com/profile/api-tokens) |
 | `CF_ZONE_ID` | CloudFlare Zone ID (found in domain overview) |
-| `HOSTNAME` | Base hostname for DNS records |
+| `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `host.internal.example.com`) |
+| `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `host.external.example.com`) |
+| `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `host.ipv6.example.com`) |
+| `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `host.example.com`) - **use this!** |
+
+**Important:** Specify the EXACT full domain names you want created. Works with CloudFlare, Route53, or any DNS provider.
+
+**Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
+- From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- From the internet: resolves to external IPv4 and IPv6
+- Your OS/browser automatically picks the best route
 
 ### Optional Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `INTERNAL_DOMAIN` | Domain for internal IPv4 record | `HOSTNAME` |
-| `EXTERNAL_DOMAIN` | Domain for external IPv4 record | `HOSTNAME` |
-| `IPV6_DOMAIN` | Domain for external IPv6 record | `HOSTNAME` |
+| `INSTANCE_ID` | Identifier for heartbeat records | Machine hostname |
 | `CF_PROXIED` | Proxy through CloudFlare (true/false) | `false` |
 
 ## Usage
@@ -74,12 +82,22 @@ docker build -t dynip-updater .
 docker run --rm \
   -e CF_API_TOKEN=your_token \
   -e CF_ZONE_ID=your_zone_id \
-  -e HOSTNAME=myhost.example.com \
-  -e INTERNAL_DOMAIN=internal.myhost.example.com \
-  -e EXTERNAL_DOMAIN=myhost.example.com \
-  -e IPV6_DOMAIN=ipv6.myhost.example.com \
+  -e INTERNAL_DOMAIN=anubis.i.4.bees.wtf \
+  -e EXTERNAL_DOMAIN=anubis.e.4.bees.wtf \
+  -e IPV6_DOMAIN=anubis.6.bees.wtf \
+  -e COMBINED_DOMAIN=anubis.bees.wtf \
   dynip-updater
 ```
+
+**Examples:**
+```bash
+  -e INTERNAL_DOMAIN=anubis.i.4.bees.wtf      # Creates: anubis.i.4.bees.wtf
+  -e EXTERNAL_DOMAIN=anubis.e.4.bees.wtf      # Creates: anubis.e.4.bees.wtf
+  -e IPV6_DOMAIN=anubis.6.bees.wtf            # Creates: anubis.6.bees.wtf
+  -e COMBINED_DOMAIN=anubis.bees.wtf          # Creates: anubis.bees.wtf (use this!)
+```
+
+Then `ssh anubis.bees.wtf` works from anywhere!
 
 3. Or use an environment file:
 ```bash
@@ -126,7 +144,10 @@ go build -o dynip-updater main.go
 ```bash
 export CF_API_TOKEN=your_token
 export CF_ZONE_ID=your_zone_id
-export HOSTNAME=myhost.example.com
+export INTERNAL_DOMAIN=host.internal.example.com
+export EXTERNAL_DOMAIN=host.external.example.com
+export IPV6_DOMAIN=host.ipv6.example.com
+export COMBINED_DOMAIN=host.example.com  # The one you'll actually use!
 ```
 
 3. Run the binary:
