@@ -433,6 +433,30 @@ func (cf *CloudFlareClient) getRecordID(name, recordType string) string {
 	return ""
 }
 
+// getRecord returns the full record details, or nil if not found
+func (cf *CloudFlareClient) getRecord(name, recordType string) *CFRecord {
+	path := fmt.Sprintf("/zones/%s/dns_records?name=%s&type=%s", cf.ZoneID, name, recordType)
+
+	resp, err := cf.makeRequest("GET", path, nil)
+	if err != nil {
+		log.Printf("Error getting record for %s: %v", name, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var result CFListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return nil
+	}
+
+	if result.Success && len(result.Result) > 0 {
+		return &result.Result[0]
+	}
+
+	return nil
+}
+
 func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxied bool) bool {
 	path := fmt.Sprintf("/zones/%s/dns_records", cf.ZoneID)
 
@@ -562,9 +586,15 @@ func (cf *CloudFlareClient) deleteRecordIfExists(name, recordType string) bool {
 }
 
 func (cf *CloudFlareClient) upsertRecord(name, recordType, content string, proxied bool) bool {
-	recordID := cf.getRecordID(name, recordType)
-	if recordID != "" {
-		return cf.updateRecord(recordID, name, recordType, content, proxied)
+	record := cf.getRecord(name, recordType)
+	if record != nil {
+		// Record exists - check if content has changed
+		if record.Content == content {
+			log.Printf("No change needed for %s record %s (already %s)", recordType, name, content)
+			return true
+		}
+		log.Printf("Content changed for %s record %s: %s -> %s", recordType, name, record.Content, content)
+		return cf.updateRecord(record.ID, name, recordType, content, proxied)
 	}
 	return cf.createRecord(name, recordType, content, proxied)
 }
