@@ -62,6 +62,7 @@ type Config struct {
 	ExternalDomain string
 	IPv6Domain     string
 	CombinedDomain string
+	InstanceID     string
 	Proxied        bool
 }
 
@@ -111,6 +112,15 @@ func main() {
 			if cf.ensureRecordExists(config.InternalDomain, "A", ip, config.Proxied) {
 				successCount++
 			}
+
+			// Create/update heartbeat TXT record for this IP
+			heartbeatName := heartbeatRecordName(ip, config.InternalDomain)
+			heartbeatData := heartbeatContent(config.InstanceID)
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for IP %s", ip)
+			}
 		}
 
 		// Delete stale records (IPs that exist in DNS but not in detected list)
@@ -120,6 +130,14 @@ func main() {
 				log.Printf("Deleting stale internal IPv4 record: %s", content)
 				if cf.deleteRecord(recordID, config.InternalDomain, "A") {
 					successCount++
+				}
+
+				// Also delete the heartbeat TXT record
+				heartbeatName := heartbeatRecordName(content, config.InternalDomain)
+				totalCount++
+				if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+					successCount++
+					log.Printf("Deleted heartbeat for stale IP %s", content)
 				}
 			}
 		}
@@ -131,6 +149,14 @@ func main() {
 			log.Printf("No internal IPv4 addresses found - deleting record: %s", record.Content)
 			if cf.deleteRecord(record.ID, config.InternalDomain, "A") {
 				successCount++
+			}
+
+			// Also delete the heartbeat TXT record
+			heartbeatName := heartbeatRecordName(record.Content, config.InternalDomain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for IP %s", record.Content)
 			}
 		}
 	}
@@ -195,6 +221,15 @@ func main() {
 				if cf.ensureRecordExists(config.CombinedDomain, "A", ip, config.Proxied) {
 					successCount++
 				}
+
+				// Create/update heartbeat TXT record for this IP
+				heartbeatName := heartbeatRecordName(ip, config.CombinedDomain)
+				heartbeatData := heartbeatContent(config.InstanceID)
+				totalCount++
+				if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+					successCount++
+					log.Printf("Updated heartbeat for IP %s on combined domain", ip)
+				}
 			}
 
 			// Delete stale A records (IPs that exist in DNS but not in detected list)
@@ -204,6 +239,14 @@ func main() {
 					log.Printf("Deleting stale combined domain A record: %s", content)
 					if cf.deleteRecord(recordID, config.CombinedDomain, "A") {
 						successCount++
+					}
+
+					// Also delete the heartbeat TXT record
+					heartbeatName := heartbeatRecordName(content, config.CombinedDomain)
+					totalCount++
+					if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+						successCount++
+						log.Printf("Deleted heartbeat for stale IP %s on combined domain", content)
 					}
 				}
 			}
@@ -215,6 +258,14 @@ func main() {
 				log.Printf("No IPv4 addresses found - deleting combined domain A record: %s", record.Content)
 				if cf.deleteRecord(record.ID, config.CombinedDomain, "A") {
 					successCount++
+				}
+
+				// Also delete the heartbeat TXT record
+				heartbeatName := heartbeatRecordName(record.Content, config.CombinedDomain)
+				totalCount++
+				if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+					successCount++
+					log.Printf("Deleted heartbeat for IP %s on combined domain", record.Content)
 				}
 			}
 		}
@@ -273,6 +324,7 @@ func loadConfig() *Config {
 	config.ExternalDomain = getEnvOrDefault("EXTERNAL_DOMAIN", config.Hostname)
 	config.IPv6Domain = getEnvOrDefault("IPV6_DOMAIN", config.Hostname)
 	config.CombinedDomain = getEnvOrDefault("COMBINED_DOMAIN", "")
+	config.InstanceID = getEnvOrDefault("INSTANCE_ID", config.Hostname)
 	config.Proxied = strings.ToLower(os.Getenv("CF_PROXIED")) == "true"
 
 	return config
@@ -283,6 +335,25 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ipToDNSLabel converts an IP address to a DNS-safe label
+// Example: "192.168.1.10" -> "192-168-1-10"
+func ipToDNSLabel(ip string) string {
+	return strings.ReplaceAll(ip, ".", "-")
+}
+
+// heartbeatRecordName creates the TXT record name for a heartbeat
+// Example: "192.168.1.10", "internal.example.com" -> "_heartbeat-192-168-1-10.internal.example.com"
+func heartbeatRecordName(ip, baseDomain string) string {
+	return fmt.Sprintf("_heartbeat-%s.%s", ipToDNSLabel(ip), baseDomain)
+}
+
+// heartbeatContent creates the TXT record content with current timestamp and instance ID
+// Format: "timestamp,instanceID"
+func heartbeatContent(instanceID string) string {
+	timestamp := time.Now().Unix()
+	return fmt.Sprintf("%d,%s", timestamp, instanceID)
 }
 
 func getEnvOrExit(key string) string {

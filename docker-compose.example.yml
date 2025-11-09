@@ -1,0 +1,37 @@
+# Example docker-compose configuration for running both the DNS updater and cleanup service
+version: '3.8'
+
+services:
+  # Main DNS updater - runs on each host/container
+  dns-updater:
+    image: richleigh/dynipupdate:latest
+    container_name: dns-updater
+    restart: unless-stopped
+    environment:
+      - CF_API_TOKEN=${CF_API_TOKEN}
+      - CF_ZONE_ID=${CF_ZONE_ID}
+      - HOSTNAME=${HOSTNAME:-myhost.example.com}
+      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-internal.example.com}
+      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-myhost.example.com}
+      - IPV6_DOMAIN=${IPV6_DOMAIN:-myhost.example.com}
+      - COMBINED_DOMAIN=${COMBINED_DOMAIN:-all.example.com}
+      - INSTANCE_ID=${INSTANCE_ID:-${HOSTNAME:-unknown}}
+      - CF_PROXIED=false
+    network_mode: host  # Required to detect host network interfaces
+
+  # Cleanup service - runs once per environment (not per host)
+  dns-cleanup:
+    build:
+      context: .
+      dockerfile: Dockerfile.cleanup
+    container_name: dns-cleanup
+    restart: unless-stopped
+    environment:
+      - CF_API_TOKEN=${CF_API_TOKEN}
+      - CF_ZONE_ID=${CF_ZONE_ID}
+      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-internal.example.com}
+      - COMBINED_DOMAIN=${COMBINED_DOMAIN:-all.example.com}
+      # How old (in seconds) before a heartbeat is considered stale
+      - STALE_THRESHOLD_SECONDS=900  # 15 minutes
+      # How often to run the cleanup check
+      - CLEANUP_INTERVAL_SECONDS=300  # 5 minutes
