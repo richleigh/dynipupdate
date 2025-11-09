@@ -190,6 +190,7 @@ func cleanupDomain(cf *CloudFlareClient, domain string, recordType string, heart
 					log.Printf("  Deleted %s record: %s -> %s", recordType, record.Name, record.Content)
 				}
 			}
+		}
 
 			// Delete the heartbeat TXT record
 			if len(heartbeatRecords) > 0 {
