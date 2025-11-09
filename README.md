@@ -49,18 +49,23 @@ All configuration is done via environment variables. See `.env.example` for a co
 |----------|-------------|
 | `CF_API_TOKEN` | CloudFlare API token (create at https://dash.cloudflare.com/profile/api-tokens) |
 | `CF_ZONE_ID` | CloudFlare Zone ID (found in domain overview) |
-| `INTERNAL_DOMAIN` | Subdomain for internal IPv4 record (e.g., `host.i.4` - **do NOT include zone name**) |
-| `EXTERNAL_DOMAIN` | Subdomain for external IPv4 record (e.g., `host.e.4` - **do NOT include zone name**) |
-| `IPV6_DOMAIN` | Subdomain for external IPv6 record (e.g., `host.6` - **do NOT include zone name**) |
+| `INTERNAL_DOMAIN` | Subdomain for internal IPv4 records only (e.g., `host.internal`) |
+| `EXTERNAL_DOMAIN` | Subdomain for external IPv4 record only (e.g., `host.external`) |
+| `IPV6_DOMAIN` | Subdomain for external IPv6 record only (e.g., `host.ipv6`) |
+| `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `host`) - **use this!** |
 
 **Important:** Do NOT include your zone name (e.g., `.bees.wtf`) in domain variables. CloudFlare automatically appends it.
+
+**Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
+- From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- From the internet: resolves to external IPv4 and IPv6
+- Your OS/browser automatically picks the best route
 
 ### Optional Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `INSTANCE_ID` | Identifier for heartbeat records | Machine hostname |
-| `COMBINED_DOMAIN` | Domain for combined A+AAAA records | None (disabled) |
 | `CF_PROXIED` | Proxy through CloudFlare (true/false) | `false` |
 
 ## Usage
@@ -78,16 +83,21 @@ docker run --rm \
   -e CF_API_TOKEN=your_token \
   -e CF_ZONE_ID=your_zone_id \
   -e INTERNAL_DOMAIN=host.internal.example.com \
-  -e EXTERNAL_DOMAIN=host.example.com \
+  -e EXTERNAL_DOMAIN=host.external.example.com \
   -e IPV6_DOMAIN=host.ipv6.example.com \
+  -e COMBINED_DOMAIN=host.example.com \
   dynip-updater
 ```
 
 **Note:** Do NOT include your zone name (e.g., `.bees.wtf`). If your zone is `bees.wtf`:
 ```bash
-  -e INTERNAL_DOMAIN=anubis.i.4  # Creates: anubis.i.4.bees.wtf
-  -e EXTERNAL_DOMAIN=anubis.e.4  # Creates: anubis.e.4.bees.wtf
+  -e INTERNAL_DOMAIN=anubis.i.4      # Creates: anubis.i.4.bees.wtf
+  -e EXTERNAL_DOMAIN=anubis.e.4      # Creates: anubis.e.4.bees.wtf
+  -e IPV6_DOMAIN=anubis.6            # Creates: anubis.6.bees.wtf
+  -e COMBINED_DOMAIN=anubis          # Creates: anubis.bees.wtf (use this!)
 ```
+
+Then `ssh anubis.bees.wtf` works from anywhere!
 
 3. Or use an environment file:
 ```bash
@@ -135,8 +145,9 @@ go build -o dynip-updater main.go
 export CF_API_TOKEN=your_token
 export CF_ZONE_ID=your_zone_id
 export INTERNAL_DOMAIN=host.internal.example.com
-export EXTERNAL_DOMAIN=host.example.com
+export EXTERNAL_DOMAIN=host.external.example.com
 export IPV6_DOMAIN=host.ipv6.example.com
+export COMBINED_DOMAIN=host.example.com  # The one you'll actually use!
 ```
 
 3. Run the binary:

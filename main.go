@@ -295,7 +295,7 @@ func loadConfig() *Config {
 		InternalDomain: getEnvOrExit("INTERNAL_DOMAIN"),
 		ExternalDomain: getEnvOrExit("EXTERNAL_DOMAIN"),
 		IPv6Domain:     getEnvOrExit("IPV6_DOMAIN"),
-		CombinedDomain: os.Getenv("COMBINED_DOMAIN"), // Optional
+		CombinedDomain: getEnvOrExit("COMBINED_DOMAIN"),
 		InstanceID:     getEnvOrDefault("INSTANCE_ID", machineHostname),
 		Proxied:        strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
 	}
