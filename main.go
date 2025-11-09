@@ -63,7 +63,6 @@ type Config struct {
 	ExternalDomain  string
 	IPv6Domain      string
 	CombinedDomain  string
-	InstanceID      string
 	Proxied         bool
 	StaleThreshold  int // seconds (for cleanup mode)
 	CleanupInterval int // seconds (for cleanup mode)
@@ -130,7 +129,7 @@ func main() {
 
 		// Create/update heartbeat for this domain
 		heartbeatName := heartbeatRecordName(config.InternalDomain)
-		heartbeatData := heartbeatContent(config.InstanceID)
+		heartbeatData := heartbeatContent()
 		totalCount++
 		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
 			successCount++
@@ -298,12 +297,6 @@ func loadConfig(cleanupMode bool) *Config {
 	log.Printf("API token loaded (length: %d chars, starts with: %.8s..., ends with: ...%.4s)",
 		len(apiToken), apiToken, apiToken[max(0, len(apiToken)-4):])
 
-	// Get actual machine hostname for INSTANCE_ID default
-	machineHostname, err := os.Hostname()
-	if err != nil {
-		machineHostname = "unknown-host"
-	}
-
 	config := &Config{
 		CFAPIToken:      apiToken,
 		CFZoneID:        getEnvOrExit("CF_ZONE_ID"),
@@ -311,7 +304,6 @@ func loadConfig(cleanupMode bool) *Config {
 		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
 		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
 		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
-		InstanceID:      getEnvOrDefault("INSTANCE_ID", machineHostname),
 		Proxied:         strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
 		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
 		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
@@ -353,12 +345,12 @@ func heartbeatRecordName(domain string) string {
 	return domain
 }
 
-// heartbeatContent creates the TXT record content with current timestamp and instance ID
-// Format: "timestamp,instanceID" (quoted string with comma-delimited values)
-func heartbeatContent(instanceID string) string {
+// heartbeatContent creates the TXT record content with current timestamp
+// Format: "timestamp" (quoted string)
+func heartbeatContent() string {
 	timestamp := time.Now().Unix()
-	// TXT records should be quoted strings
-	return fmt.Sprintf("\"%d,%s\"", timestamp, instanceID)
+	// TXT records should be quoted strings - just the timestamp
+	return fmt.Sprintf("\"%d\"", timestamp)
 }
 
 func getEnvOrExit(key string) string {
@@ -929,29 +921,22 @@ func cleanupDomain(cf *CloudFlareClient, domain string, recordType string, stale
 		shouldDelete = true
 		deleteReason = "no heartbeat found"
 	} else {
-		// Parse the heartbeat content: "timestamp,instanceID"
+		// Parse the heartbeat content: "timestamp"
 		heartbeatContent := heartbeatRecords[0].Content
 		// Remove quotes if present (CloudFlare returns TXT records with quotes)
 		heartbeatContent = strings.Trim(heartbeatContent, "\"")
 
-		parts := strings.Split(heartbeatContent, ",")
-		if len(parts) < 1 {
-			log.Printf("Invalid heartbeat format for %s: %s", domain, heartbeatContent)
+		timestamp, err := strconv.ParseInt(heartbeatContent, 10, 64)
+		if err != nil {
+			log.Printf("Invalid timestamp in heartbeat for %s: %s", domain, heartbeatContent)
 			shouldDelete = true
-			deleteReason = "invalid heartbeat format"
+			deleteReason = "invalid timestamp"
 		} else {
-			timestamp, err := strconv.ParseInt(parts[0], 10, 64)
-			if err != nil {
-				log.Printf("Invalid timestamp in heartbeat for %s: %s", domain, parts[0])
+			// Check if heartbeat is stale
+			age := time.Now().Unix() - timestamp
+			if age > int64(staleThresholdSeconds) {
 				shouldDelete = true
-				deleteReason = "invalid timestamp"
-			} else {
-				// Check if heartbeat is stale
-				age := time.Now().Unix() - timestamp
-				if age > int64(staleThresholdSeconds) {
-					shouldDelete = true
-					deleteReason = fmt.Sprintf("stale heartbeat (age: %ds)", age)
-				}
+				deleteReason = fmt.Sprintf("stale heartbeat (age: %ds)", age)
 			}
 		}
 	}

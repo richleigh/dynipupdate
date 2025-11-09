@@ -43,7 +43,6 @@ All configuration is done via environment variables. See `.env.example` for a co
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `INSTANCE_ID` | Identifier for heartbeat records | Machine hostname |
 | `CF_PROXIED` | Proxy through CloudFlare (true/false) | `false` |
 | `STALE_THRESHOLD_SECONDS` | Cleanup: Age before records are stale | `3600` (1 hour) |
 | `CLEANUP_INTERVAL_SECONDS` | Cleanup: How often to check | `300` (5 minutes) |
@@ -103,25 +102,27 @@ services:
 
 ## How Heartbeat Cleanup Works
 
-When the updater creates internal or combined domain records, it also creates a heartbeat TXT record **at the same domain name**:
+When the updater runs, it creates/updates a heartbeat TXT record **at the same domain name** as the A/AAAA records:
 
 ```
-# A record for the IP
+# Multiple A records for the IPs
 internal.example.com A 192.168.1.10
+internal.example.com A 192.168.1.11
 
-# Heartbeat TXT record (same name, different type)
-internal.example.com TXT "1699564820,web-container-abc123"
+# ONE heartbeat TXT record (same name, different type)
+internal.example.com TXT "1699564820"
 ```
 
 The heartbeat TXT record contains:
-- **Unix timestamp**: When the heartbeat was last updated (e.g., 1699564820)
-- **Instance ID**: Identifier for the host/container (e.g., web-container-abc123)
-- Format: `"timestamp,instanceID"` (quoted, comma-delimited)
+- **Unix timestamp**: When the updater last ran (e.g., 1699564820)
+- Format: `"timestamp"` (quoted string)
 
-The cleanup service:
-1. Checks the TXT record at each domain for its heartbeat
-2. If the TXT record is missing or older than threshold, deletes both the A/AAAA and TXT records
-3. Works for ephemeral containers that crash without cleanup
+**How it works:**
+1. Each time the updater runs, it updates the TXT record with the current timestamp
+2. The cleanup service periodically checks the TXT record at each domain
+3. If the TXT record is missing or older than threshold (default: 1 hour), cleanup knows the updater process died
+4. Cleanup then deletes ALL records for that domain (A/AAAA and TXT)
+5. This weeds out processes/containers hanging around for no good reason
 
 ## Building
 
