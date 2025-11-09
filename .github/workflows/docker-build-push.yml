@@ -29,13 +29,10 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Run tests
-        run: make test
-
       - name: Build and push Docker images
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-        run: make build-push
+        run: make build
 
       - name: Image tags summary
         run: |

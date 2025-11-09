@@ -11,13 +11,7 @@ This project uses a Makefile with timestamp-based version tags for Docker builds
 
 2. **Build and push:**
    ```bash
-   make build-push
-   ```
-
-   Or build locally first, then push separately:
-   ```bash
-   make build  # Build for current platform only
-   make push   # Push to Docker Hub
+   make build
    ```
 
 ## Configuration
@@ -34,9 +28,7 @@ The build system supports several environment variables:
 ## Available Targets
 
 ```bash
-make build       # Build locally for current platform (no push)
-make push        # Push previously built images to Docker Hub
-make build-push  # Build multi-platform and push (convenience)
+make build       # Build multi-platform images and push to Docker Hub
 make test        # Run Go unit tests only
 make version-tag # Show what the next version tag will be
 make clean       # Clean build artifacts
@@ -56,70 +48,35 @@ This ensures every build has a unique, sortable version tag without coordination
 - Build at 2:30:22 PM UTC on Nov 9, 2025: `20251109-143022`
 - Build at 8:15:05 AM UTC on Nov 10, 2025: `20251110-081505`
 
-Both the timestamp tag and `latest` are created:
+Both the timestamp tag and `latest` are pushed to Docker Hub:
 - `your-username/dynipupdate:latest` - Always the most recent build
 - `your-username/dynipupdate:20251109-143022` - Specific timestamp for rollback/debugging
 
-## Build Workflows
-
-### Local Development (Single Platform)
-
-For quick local testing without pushing to Docker Hub:
-
-```bash
-make build
-```
-
-This builds only for your current platform (e.g., `linux/amd64`) and loads the image locally. Perfect for testing before publishing.
-
-### Production Build (Multi-Platform)
-
-For publishing to Docker Hub with multi-platform support:
-
-```bash
-export DOCKER_USERNAME=your-username
-make build-push
-```
-
-This builds for all 5 platforms and pushes both `:latest` and `:YYYYMMDD-HHMMSS` tags.
-
-### Build Then Push Separately
-
-For more control over the process:
-
-```bash
-# Build and test locally
-make build
-
-# Test your image
-docker run --rm your-username/dynipupdate:latest
-
-# If everything works, push to Docker Hub
-make push
-```
-
-Note: `make build` only builds for your current platform, so `make push` will only push that single platform. For multi-platform, use `make build-push`.
+The build process:
+- Runs Go unit tests
+- Builds for all 5 platforms (amd64, arm64, ppc64le, s390x, riscv64)
+- Pushes to Docker Hub with both `:latest` and `:YYYYMMDD-HHMMSS` tags
 
 ## Examples
 
 ### Use auto-detected username
 ```bash
-make build-push
+make build
 ```
 
 ### Override username
 ```bash
-DOCKER_USERNAME=myuser make build-push
+DOCKER_USERNAME=myuser make build
 ```
 
 ### Override full image name
 ```bash
-IMAGE_NAME=myorg/myapp make build-push
+IMAGE_NAME=myorg/myapp make build
 ```
 
 ### Build for specific platforms only
 ```bash
-PLATFORMS=linux/amd64,linux/arm64 make build-push
+PLATFORMS=linux/amd64,linux/arm64 make build
 ```
 
 ### Preview next version tag
@@ -139,11 +96,15 @@ If you see this error, either:
 
 **Multi-platform build fails**
 
-The `make build` target only builds for your current platform because Docker buildx cannot load multi-platform images locally. Use `make build-push` for multi-platform builds, which pushes directly to Docker Hub.
+Ensure Docker buildx is properly set up:
+```bash
+docker buildx ls
+```
 
-**Image not found for `make push`**
-
-You need to run `make build` first to create the local images before pushing them.
+If you don't see a builder, create one:
+```bash
+docker buildx create --use
+```
 
 ## CI/CD Integration
 
