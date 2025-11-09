@@ -69,7 +69,7 @@ check-docker-username:
 		exit 1; \
 	fi
 
-version-tag: check-docker-username
+version-tag:
 	@echo "Next version tag will be: $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd)"
 
 test:
@@ -78,10 +78,11 @@ test:
 
 # Build Docker images (without pushing)
 # Supports building specific platforms via PLATFORMS variable
-build: check-docker-username test
+build: test
 	@echo "Building Docker images..."
 	@$(eval VERSION_TAG := $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd))
 	@echo "Building version: $(VERSION_TAG)"
+	@echo "Image name: $(IMAGE_NAME)"
 	@echo "Platforms: $(PLATFORMS)"
 	docker buildx build \
 		--platform $(PLATFORMS) \
