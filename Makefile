@@ -1,4 +1,4 @@
-.PHONY: help build build-push test clean version-tag check-docker-username
+.PHONY: help build push build-push test clean version-tag check-docker-username
 
 # Configuration - can be overridden via environment variables
 # Try multiple methods to detect Docker Hub username:
@@ -19,8 +19,9 @@ PLATFORMS ?= linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64
 help:
 	@echo "Dynamic DNS Updater - Build Targets"
 	@echo ""
-	@echo "  make build       - Build multi-platform Docker images (no push)"
-	@echo "  make build-push  - Build multi-platform Docker images and push to Docker Hub"
+	@echo "  make build       - Build Docker images (default: all platforms, no push)"
+	@echo "  make push        - Push previously built images to Docker Hub"
+	@echo "  make build-push  - Build and push in one step (default: all platforms)"
 	@echo "  make test        - Run Go unit tests"
 	@echo "  make version-tag - Show what the next version tag will be"
 	@echo "  make clean       - Clean build artifacts"
@@ -37,10 +38,11 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build                                        # Build all platforms (no push)"
-	@echo "  make build-push                                   # Build and push"
-	@echo "  DOCKER_USERNAME=myuser make build-push           # Override username"
-	@echo "  IMAGE_NAME=myuser/myrepo make build-push         # Override full image name"
-	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build-push # Build specific platforms only"
+	@echo "  PLATFORMS=linux/amd64 make build                  # Build just amd64 (for testing)"
+	@echo "  PLATFORMS=linux/arm64 make build                  # Build just arm64 (for testing)"
+	@echo "  make push                                         # Push what you built"
+	@echo "  make build-push                                   # Build all platforms and push"
+	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build-push # Build specific platforms and push"
 
 check-docker-username:
 	@if echo "$(IMAGE_NAME)" | grep -q "^/"; then \
@@ -66,9 +68,10 @@ test:
 	@echo "Running Go unit tests..."
 	go test -v ./...
 
-# Build multi-platform Docker images (without pushing)
+# Build Docker images (without pushing)
+# Supports building specific platforms via PLATFORMS variable
 build: check-docker-username test
-	@echo "Building multi-platform Docker images..."
+	@echo "Building Docker images..."
 	@$(eval VERSION_TAG := $(shell date -u +%Y%m%d-%H%M%S))
 	@echo "Building version: $(VERSION_TAG)"
 	@echo "Platforms: $(PLATFORMS)"
@@ -84,12 +87,44 @@ build: check-docker-username test
 	@echo ""
 	@echo "Platforms: $(PLATFORMS)"
 	@echo ""
-	@echo "Note: Images were built but not pushed to Docker Hub."
-	@echo "To push, run: make build-push"
+	@echo "To push these images, run: make push"
 
-# Build and push multi-platform Docker images
+# Push previously built images to Docker Hub
+push: check-docker-username
+	@echo "Pushing images to Docker Hub..."
+	@if ! docker buildx imagetools inspect $(IMAGE_NAME):latest >/dev/null 2>&1 && \
+	    ! docker image inspect $(IMAGE_NAME):latest >/dev/null 2>&1; then \
+		echo "Error: Image $(IMAGE_NAME):latest not found."; \
+		echo "Run 'make build' first to build the images."; \
+		exit 1; \
+	fi
+	@echo "Pushing $(IMAGE_NAME):latest..."
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		-t $(IMAGE_NAME):latest \
+		--push \
+		.
+	@# Find and push the most recent timestamp tag if it exists locally
+	@$(eval LATEST_TAG := $(shell docker images $(IMAGE_NAME) --format "{{.Tag}}" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}$$' | sort -r | head -1))
+	@if [ -n "$(LATEST_TAG)" ]; then \
+		echo "Pushing $(IMAGE_NAME):$(LATEST_TAG)..."; \
+		docker buildx build \
+			--platform $(PLATFORMS) \
+			-t $(IMAGE_NAME):$(LATEST_TAG) \
+			--push \
+			.; \
+	fi
+	@echo ""
+	@echo "✓ Successfully pushed:"
+	@echo "  - $(IMAGE_NAME):latest"
+	@if [ -n "$(LATEST_TAG)" ]; then \
+		echo "  - $(IMAGE_NAME):$(LATEST_TAG)"; \
+	fi
+
+# Build and push in one step
+# Supports building specific platforms via PLATFORMS variable
 build-push: check-docker-username test
-	@echo "Building and pushing multi-platform Docker images..."
+	@echo "Building and pushing Docker images..."
 	@$(eval VERSION_TAG := $(shell date -u +%Y%m%d-%H%M%S))
 	@echo "Building version: $(VERSION_TAG)"
 	@echo "Platforms: $(PLATFORMS)"

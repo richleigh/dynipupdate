@@ -33,8 +33,9 @@ The build system supports several environment variables:
 ## Available Targets
 
 ```bash
-make build       # Build multi-platform images (no push)
-make build-push  # Build multi-platform images and push to Docker Hub
+make build       # Build images (default: all platforms, no push)
+make push        # Push previously built images to Docker Hub
+make build-push  # Build and push in one step (default: all platforms)
 make test        # Run Go unit tests only
 make version-tag # Show what the next version tag will be
 make clean       # Clean build artifacts
@@ -58,20 +59,41 @@ Both the timestamp tag and `latest` are pushed to Docker Hub:
 - `your-username/dynipupdate:latest` - Always the most recent build
 - `your-username/dynipupdate:20251109-143022` - Specific timestamp for rollback/debugging
 
-Build options:
-- `make build` - Builds for all 5 platforms (amd64, arm64, ppc64le, s390x, riscv64) but doesn't push
-- `make build-push` - Builds for all platforms AND pushes to Docker Hub with `:latest` and `:YYYYMMDD-HHMMSS` tags
+Build workflow:
+- `make build` - Builds for specified platforms (default: all 5) but doesn't push
+- `make push` - Pushes what you already built
+- `make build-push` - Builds and pushes in one step (default: all platforms)
+
+This is useful for debugging platform-specific issues. You can build just one platform, test it, then push only that platform if it works.
 
 ## Examples
 
-### Build without pushing (for testing)
+### Build all platforms (no push)
 ```bash
 make build
 ```
 
-### Build and push with auto-detected username
+### Build and push all platforms in one step
 ```bash
 make build-push
+```
+
+### Debug a specific platform
+```bash
+# Build just amd64 to test
+PLATFORMS=linux/amd64 make build
+
+# If it works, push it
+PLATFORMS=linux/amd64 make push
+
+# Or build just arm64
+PLATFORMS=linux/arm64 make build
+```
+
+### Build and push specific platforms only
+```bash
+# Only build and push amd64 and arm64
+PLATFORMS=linux/amd64,linux/arm64 make build-push
 ```
 
 ### Override username
@@ -82,11 +104,6 @@ DOCKER_USERNAME=myuser make build-push
 ### Override full image name
 ```bash
 IMAGE_NAME=myorg/myapp make build-push
-```
-
-### Build for specific platforms only
-```bash
-PLATFORMS=linux/amd64,linux/arm64 make build-push
 ```
 
 ### Preview next version tag
@@ -114,6 +131,22 @@ docker buildx ls
 If you don't see a builder, create one:
 ```bash
 docker buildx create --use
+```
+
+**Platform-specific build issues**
+
+If one platform fails, you can build and test each platform individually:
+
+```bash
+# Test each platform separately
+PLATFORMS=linux/amd64 make build
+PLATFORMS=linux/arm64 make build
+PLATFORMS=linux/ppc64le make build
+PLATFORMS=linux/s390x make build
+PLATFORMS=linux/riscv64 make build
+
+# Push only the platforms that work
+PLATFORMS=linux/amd64,linux/arm64 make push
 ```
 
 ## CI/CD Integration
