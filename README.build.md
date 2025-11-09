@@ -11,6 +11,11 @@ This project uses a Makefile with timestamp-based version tags for Docker builds
 
 2. **Build and push:**
    ```bash
+   make build-push
+   ```
+
+   Or build without pushing (to test):
+   ```bash
    make build
    ```
 
@@ -28,7 +33,8 @@ The build system supports several environment variables:
 ## Available Targets
 
 ```bash
-make build       # Build multi-platform images and push to Docker Hub
+make build       # Build multi-platform images (no push)
+make build-push  # Build multi-platform images and push to Docker Hub
 make test        # Run Go unit tests only
 make version-tag # Show what the next version tag will be
 make clean       # Clean build artifacts
@@ -52,31 +58,35 @@ Both the timestamp tag and `latest` are pushed to Docker Hub:
 - `your-username/dynipupdate:latest` - Always the most recent build
 - `your-username/dynipupdate:20251109-143022` - Specific timestamp for rollback/debugging
 
-The build process:
-- Runs Go unit tests
-- Builds for all 5 platforms (amd64, arm64, ppc64le, s390x, riscv64)
-- Pushes to Docker Hub with both `:latest` and `:YYYYMMDD-HHMMSS` tags
+Build options:
+- `make build` - Builds for all 5 platforms (amd64, arm64, ppc64le, s390x, riscv64) but doesn't push
+- `make build-push` - Builds for all platforms AND pushes to Docker Hub with `:latest` and `:YYYYMMDD-HHMMSS` tags
 
 ## Examples
 
-### Use auto-detected username
+### Build without pushing (for testing)
 ```bash
 make build
 ```
 
+### Build and push with auto-detected username
+```bash
+make build-push
+```
+
 ### Override username
 ```bash
-DOCKER_USERNAME=myuser make build
+DOCKER_USERNAME=myuser make build-push
 ```
 
 ### Override full image name
 ```bash
-IMAGE_NAME=myorg/myapp make build
+IMAGE_NAME=myorg/myapp make build-push
 ```
 
 ### Build for specific platforms only
 ```bash
-PLATFORMS=linux/amd64,linux/arm64 make build
+PLATFORMS=linux/amd64,linux/arm64 make build-push
 ```
 
 ### Preview next version tag

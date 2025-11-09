@@ -1,4 +1,4 @@
-.PHONY: help build test clean version-tag check-docker-username
+.PHONY: help build build-push test clean version-tag check-docker-username
 
 # Configuration - can be overridden via environment variables
 # Try multiple methods to detect Docker Hub username:
@@ -19,7 +19,8 @@ PLATFORMS ?= linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64
 help:
 	@echo "Dynamic DNS Updater - Build Targets"
 	@echo ""
-	@echo "  make build       - Build multi-platform Docker images and push to Docker Hub"
+	@echo "  make build       - Build multi-platform Docker images (no push)"
+	@echo "  make build-push  - Build multi-platform Docker images and push to Docker Hub"
 	@echo "  make test        - Run Go unit tests"
 	@echo "  make version-tag - Show what the next version tag will be"
 	@echo "  make clean       - Clean build artifacts"
@@ -32,13 +33,14 @@ help:
 	@echo ""
 	@echo "Quick Start:"
 	@echo "  export DOCKER_USERNAME=your-username"
-	@echo "  make build"
+	@echo "  make build-push"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build                                   # Build all platforms"
-	@echo "  DOCKER_USERNAME=myuser make build           # Override username"
-	@echo "  IMAGE_NAME=myuser/myrepo make build         # Override full image name"
-	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build # Build specific platforms only"
+	@echo "  make build                                        # Build all platforms (no push)"
+	@echo "  make build-push                                   # Build and push"
+	@echo "  DOCKER_USERNAME=myuser make build-push           # Override username"
+	@echo "  IMAGE_NAME=myuser/myrepo make build-push         # Override full image name"
+	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build-push # Build specific platforms only"
 
 check-docker-username:
 	@if echo "$(IMAGE_NAME)" | grep -q "^/"; then \
@@ -64,8 +66,29 @@ test:
 	@echo "Running Go unit tests..."
 	go test -v ./...
 
-# Build and push multi-platform Docker images
+# Build multi-platform Docker images (without pushing)
 build: check-docker-username test
+	@echo "Building multi-platform Docker images..."
+	@$(eval VERSION_TAG := $(shell date -u +%Y%m%d-%H%M%S))
+	@echo "Building version: $(VERSION_TAG)"
+	@echo "Platforms: $(PLATFORMS)"
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		-t $(IMAGE_NAME):latest \
+		-t $(IMAGE_NAME):$(VERSION_TAG) \
+		.
+	@echo ""
+	@echo "✓ Successfully built (not pushed):"
+	@echo "  - $(IMAGE_NAME):latest"
+	@echo "  - $(IMAGE_NAME):$(VERSION_TAG)"
+	@echo ""
+	@echo "Platforms: $(PLATFORMS)"
+	@echo ""
+	@echo "Note: Images were built but not pushed to Docker Hub."
+	@echo "To push, run: make build-push"
+
+# Build and push multi-platform Docker images
+build-push: check-docker-username test
 	@echo "Building and pushing multi-platform Docker images..."
 	@$(eval VERSION_TAG := $(shell date -u +%Y%m%d-%H%M%S))
 	@echo "Building version: $(VERSION_TAG)"
