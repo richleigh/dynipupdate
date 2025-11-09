@@ -49,15 +49,18 @@ All configuration is done via environment variables. See `.env.example` for a co
 |----------|-------------|
 | `CF_API_TOKEN` | CloudFlare API token (create at https://dash.cloudflare.com/profile/api-tokens) |
 | `CF_ZONE_ID` | CloudFlare Zone ID (found in domain overview) |
-| `HOSTNAME` | Base hostname for DNS records |
+| `INTERNAL_DOMAIN` | Subdomain for internal IPv4 record (e.g., `host.i.4` - **do NOT include zone name**) |
+| `EXTERNAL_DOMAIN` | Subdomain for external IPv4 record (e.g., `host.e.4` - **do NOT include zone name**) |
+| `IPV6_DOMAIN` | Subdomain for external IPv6 record (e.g., `host.6` - **do NOT include zone name**) |
+
+**Important:** Do NOT include your zone name (e.g., `.bees.wtf`) in domain variables. CloudFlare automatically appends it.
 
 ### Optional Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `INTERNAL_DOMAIN` | Domain for internal IPv4 record | `HOSTNAME` |
-| `EXTERNAL_DOMAIN` | Domain for external IPv4 record | `HOSTNAME` |
-| `IPV6_DOMAIN` | Domain for external IPv6 record | `HOSTNAME` |
+| `INSTANCE_ID` | Identifier for heartbeat records | Machine hostname |
+| `COMBINED_DOMAIN` | Domain for combined A+AAAA records | None (disabled) |
 | `CF_PROXIED` | Proxy through CloudFlare (true/false) | `false` |
 
 ## Usage
@@ -74,11 +77,16 @@ docker build -t dynip-updater .
 docker run --rm \
   -e CF_API_TOKEN=your_token \
   -e CF_ZONE_ID=your_zone_id \
-  -e HOSTNAME=myhost.example.com \
-  -e INTERNAL_DOMAIN=internal.myhost.example.com \
-  -e EXTERNAL_DOMAIN=myhost.example.com \
-  -e IPV6_DOMAIN=ipv6.myhost.example.com \
+  -e INTERNAL_DOMAIN=host.internal.example.com \
+  -e EXTERNAL_DOMAIN=host.example.com \
+  -e IPV6_DOMAIN=host.ipv6.example.com \
   dynip-updater
+```
+
+**Note:** Do NOT include your zone name (e.g., `.bees.wtf`). If your zone is `bees.wtf`:
+```bash
+  -e INTERNAL_DOMAIN=anubis.i.4  # Creates: anubis.i.4.bees.wtf
+  -e EXTERNAL_DOMAIN=anubis.e.4  # Creates: anubis.e.4.bees.wtf
 ```
 
 3. Or use an environment file:
@@ -126,7 +134,9 @@ go build -o dynip-updater main.go
 ```bash
 export CF_API_TOKEN=your_token
 export CF_ZONE_ID=your_zone_id
-export HOSTNAME=myhost.example.com
+export INTERNAL_DOMAIN=host.internal.example.com
+export EXTERNAL_DOMAIN=host.example.com
+export IPV6_DOMAIN=host.ipv6.example.com
 ```
 
 3. Run the binary:
