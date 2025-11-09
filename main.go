@@ -21,10 +21,16 @@ var rfc1918Ranges = []string{
 }
 
 // CloudFlare API structures
-type CFResponse struct {
+type CFListResponse struct {
 	Success bool              `json:"success"`
 	Errors  []json.RawMessage `json:"errors"`
 	Result  []CFRecord        `json:"result"`
+}
+
+type CFSingleResponse struct {
+	Success bool              `json:"success"`
+	Errors  []json.RawMessage `json:"errors"`
+	Result  CFRecord          `json:"result"`
 }
 
 type CFRecord struct {
@@ -394,7 +400,7 @@ func (cf *CloudFlareClient) getRecordID(name, recordType string) string {
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return ""
@@ -431,7 +437,7 @@ func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxi
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFSingleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return false
@@ -470,7 +476,7 @@ func (cf *CloudFlareClient) updateRecord(recordID, name, recordType, content str
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFSingleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return false
@@ -495,7 +501,7 @@ func (cf *CloudFlareClient) deleteRecord(recordID, name, recordType string) bool
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFSingleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return false
