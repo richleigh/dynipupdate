@@ -14,10 +14,9 @@ This project uses a Makefile with timestamp-based version tags for Docker builds
    make build-push
    ```
 
-   Or build locally first, then push separately:
+   Or build without pushing (to test):
    ```bash
-   make build  # Build for current platform only
-   make push   # Push to Docker Hub
+   make build
    ```
 
 ## Configuration
@@ -34,9 +33,9 @@ The build system supports several environment variables:
 ## Available Targets
 
 ```bash
-make build       # Build locally for current platform (no push)
+make build       # Build images (default: all platforms, no push)
 make push        # Push previously built images to Docker Hub
-make build-push  # Build multi-platform and push (convenience)
+make build-push  # Build and push in one step (default: all platforms)
 make test        # Run Go unit tests only
 make version-tag # Show what the next version tag will be
 make clean       # Clean build artifacts
@@ -45,87 +44,77 @@ make help        # Show help message
 
 ## Version Tagging
 
-The build system automatically creates version tags based on UTC timestamps in the format `YYYYMMDD-HHMMSS`:
+The build system automatically creates version tags based on **git commit timestamps** in the format `YYYYMMDD-HHMMSS`:
 
-- `YYYYMMDD` - Current date (UTC)
-- `HHMMSS` - Current time (UTC)
+- `YYYYMMDD` - Commit date
+- `HHMMSS` - Commit time
 
-This ensures every build has a unique, sortable version tag without coordination between build servers.
+**Why git commit timestamp?**
+- Same commit = same version tag (regardless of when/where it's built)
+- You can correlate Docker image versions back to specific git commits
+- CI builds and local builds of the same commit get identical version tags
+- Naturally sortable and chronological
 
 **Examples:**
-- Build at 2:30:22 PM UTC on Nov 9, 2025: `20251109-143022`
-- Build at 8:15:05 AM UTC on Nov 10, 2025: `20251110-081505`
+- Commit made at 2:30:22 PM UTC on Nov 9, 2025: `20251109-143022`
+- Commit made at 8:15:05 AM UTC on Nov 10, 2025: `20251110-081505`
 
-Both the timestamp tag and `latest` are created:
+Both the timestamp tag and `latest` are pushed to Docker Hub:
 - `your-username/dynipupdate:latest` - Always the most recent build
-- `your-username/dynipupdate:20251109-143022` - Specific timestamp for rollback/debugging
+- `your-username/dynipupdate:20251109-143022` - Specific git commit timestamp for rollback/debugging
 
-## Build Workflows
+Build workflow:
+- `make build` - Builds for specified platforms (default: all 5) but doesn't push
+- `make push` - Pushes what you already built
+- `make build-push` - Builds and pushes in one step (default: all platforms)
 
-### Local Development (Single Platform)
-
-For quick local testing without pushing to Docker Hub:
-
-```bash
-make build
-```
-
-This builds only for your current platform (e.g., `linux/amd64`) and loads the image locally. Perfect for testing before publishing.
-
-### Production Build (Multi-Platform)
-
-For publishing to Docker Hub with multi-platform support:
-
-```bash
-export DOCKER_USERNAME=your-username
-make build-push
-```
-
-This builds for all 5 platforms and pushes both `:latest` and `:YYYYMMDD-HHMMSS` tags.
-
-### Build Then Push Separately
-
-For more control over the process:
-
-```bash
-# Build and test locally
-make build
-
-# Test your image
-docker run --rm your-username/dynipupdate:latest
-
-# If everything works, push to Docker Hub
-make push
-```
-
-Note: `make build` only builds for your current platform, so `make push` will only push that single platform. For multi-platform, use `make build-push`.
+This is useful for debugging platform-specific issues. You can build just one platform, test it, then push only that platform if it works.
 
 ## Examples
 
 ### Build all platforms (no push)
 ```bash
-make build-push
+make build
 ```
 
 ### Build and push all platforms in one step
 ```bash
-DOCKER_USERNAME=myuser make build-push
+make build-push
 ```
 
 ### Debug a specific platform
 ```bash
-IMAGE_NAME=myorg/myapp make build-push
+# Build just amd64 to test
+PLATFORMS=linux/amd64 make build
+
+# If it works, push it
+PLATFORMS=linux/amd64 make push
+
+# Or build just arm64
+PLATFORMS=linux/arm64 make build
 ```
 
 ### Build and push specific platforms only
 ```bash
+# Only build and push amd64 and arm64
 PLATFORMS=linux/amd64,linux/arm64 make build-push
+```
+
+### Override username
+```bash
+DOCKER_USERNAME=myuser make build-push
+```
+
+### Override full image name
+```bash
+IMAGE_NAME=myorg/myapp make build-push
 ```
 
 ### Preview next version tag
 ```bash
 make version-tag
 # Output: Next version tag will be: 20251109-143022
+# (This is the timestamp of your most recent git commit)
 ```
 
 ## Troubleshooting
@@ -139,11 +128,31 @@ If you see this error, either:
 
 **Multi-platform build fails**
 
-The `make build` target only builds for your current platform because Docker buildx cannot load multi-platform images locally. Use `make build-push` for multi-platform builds, which pushes directly to Docker Hub.
+Ensure Docker buildx is properly set up:
+```bash
+docker buildx ls
+```
 
-**Image not found for `make push`**
+If you don't see a builder, create one:
+```bash
+docker buildx create --use
+```
 
-You need to run `make build` first to create the local images before pushing them.
+**Platform-specific build issues**
+
+If one platform fails, you can build and test each platform individually:
+
+```bash
+# Test each platform separately
+PLATFORMS=linux/amd64 make build
+PLATFORMS=linux/arm64 make build
+PLATFORMS=linux/ppc64le make build
+PLATFORMS=linux/s390x make build
+PLATFORMS=linux/riscv64 make build
+
+# Push only the platforms that work
+PLATFORMS=linux/amd64,linux/arm64 make push
+```
 
 ## CI/CD Integration
 
