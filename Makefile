@@ -62,7 +62,7 @@ check-docker-username:
 	fi
 
 version-tag: check-docker-username
-	@echo "Next version tag will be: $(shell date -u +%Y%m%d-%H%M%S)"
+	@echo "Next version tag will be: $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd)"
 
 test:
 	@echo "Running Go unit tests..."
@@ -72,7 +72,7 @@ test:
 # Supports building specific platforms via PLATFORMS variable
 build: check-docker-username test
 	@echo "Building Docker images..."
-	@$(eval VERSION_TAG := $(shell date -u +%Y%m%d-%H%M%S))
+	@$(eval VERSION_TAG := $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd))
 	@echo "Building version: $(VERSION_TAG)"
 	@echo "Platforms: $(PLATFORMS)"
 	docker buildx build \
@@ -125,7 +125,7 @@ push: check-docker-username
 # Supports building specific platforms via PLATFORMS variable
 build-push: check-docker-username test
 	@echo "Building and pushing Docker images..."
-	@$(eval VERSION_TAG := $(shell date -u +%Y%m%d-%H%M%S))
+	@$(eval VERSION_TAG := $(shell git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd))
 	@echo "Building version: $(VERSION_TAG)"
 	@echo "Platforms: $(PLATFORMS)"
 	docker buildx build \

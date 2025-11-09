@@ -9,7 +9,7 @@ When a PR is merged to `main` or `master`:
 2. Builds multi-platform Docker images for 5 architectures
 3. Pushes to Docker Hub with tags:
    - `:latest` (always the most recent build)
-   - `:YYYYMMDD-HHMMSS` (specific timestamp for this build)
+   - `:YYYYMMDD-HHMMSS` (git commit timestamp - same for all builds of this commit)
 
 ## Setup Instructions
 

@@ -44,20 +44,24 @@ make help        # Show help message
 
 ## Version Tagging
 
-The build system automatically creates version tags based on UTC timestamps in the format `YYYYMMDD-HHMMSS`:
+The build system automatically creates version tags based on **git commit timestamps** in the format `YYYYMMDD-HHMMSS`:
 
-- `YYYYMMDD` - Current date (UTC)
-- `HHMMSS` - Current time (UTC)
+- `YYYYMMDD` - Commit date
+- `HHMMSS` - Commit time
 
-This ensures every build has a unique, sortable version tag without coordination between build servers.
+**Why git commit timestamp?**
+- Same commit = same version tag (regardless of when/where it's built)
+- You can correlate Docker image versions back to specific git commits
+- CI builds and local builds of the same commit get identical version tags
+- Naturally sortable and chronological
 
 **Examples:**
-- Build at 2:30:22 PM UTC on Nov 9, 2025: `20251109-143022`
-- Build at 8:15:05 AM UTC on Nov 10, 2025: `20251110-081505`
+- Commit made at 2:30:22 PM UTC on Nov 9, 2025: `20251109-143022`
+- Commit made at 8:15:05 AM UTC on Nov 10, 2025: `20251110-081505`
 
 Both the timestamp tag and `latest` are pushed to Docker Hub:
 - `your-username/dynipupdate:latest` - Always the most recent build
-- `your-username/dynipupdate:20251109-143022` - Specific timestamp for rollback/debugging
+- `your-username/dynipupdate:20251109-143022` - Specific git commit timestamp for rollback/debugging
 
 Build workflow:
 - `make build` - Builds for specified platforms (default: all 5) but doesn't push
@@ -110,6 +114,7 @@ IMAGE_NAME=myorg/myapp make build-push
 ```bash
 make version-tag
 # Output: Next version tag will be: 20251109-143022
+# (This is the timestamp of your most recent git commit)
 ```
 
 ## Troubleshooting
