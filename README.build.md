@@ -16,7 +16,13 @@ This project uses a Makefile with timestamp-based version tags for Docker builds
 
 2. **Build and push:**
    ```bash
-   make build
+   make build-push
+   ```
+
+   Or build locally first, then push separately:
+   ```bash
+   make build  # Build for current platform only
+   make push   # Push to Docker Hub
    ```
 
 ## Configuration
@@ -35,7 +41,9 @@ The build system supports several environment variables:
 ## Available Targets
 
 ```bash
-make build       # Run tests, build and push multi-platform images with timestamp tag
+make build       # Build locally for current platform (no push)
+make push        # Push previously built images to Docker Hub
+make build-push  # Build multi-platform and push (convenience)
 make test        # Run Go unit tests only
 make version-tag # Show what the next version tag will be
 make clean       # Clean build artifacts
@@ -65,24 +73,33 @@ Both the timestamp tag and `latest` are pushed to Docker Hub.
 
 ## Examples
 
-### Use auto-detected username
+### Build locally for testing (current platform only)
 ```bash
 make build
+# Output: Builds for linux/amd64 (or your current platform)
+```
+
+### Build and push multi-platform images
+```bash
+make build-push
+# Output: Builds for all 5 platforms and pushes to Docker Hub
+```
+
+### Build locally, then push separately
+```bash
+make build
+# ... test the image locally ...
+make push
 ```
 
 ### Override username
 ```bash
-DOCKER_USERNAME=myuser make build
+DOCKER_USERNAME=myuser make build-push
 ```
 
 ### Override full image name
 ```bash
-IMAGE_NAME=myorg/myapp make build
-```
-
-### Build for specific platforms only
-```bash
-PLATFORMS=linux/amd64,linux/arm64 make build
+IMAGE_NAME=myorg/myapp make build-push
 ```
 
 ### Preview next version tag
