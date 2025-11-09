@@ -13,7 +13,8 @@ DOCKER_USERNAME ?= $(shell \
 	fi \
 )
 DOCKER_REPO ?= dynipupdate
-IMAGE_NAME ?= $(DOCKER_USERNAME)/$(DOCKER_REPO)
+# For local builds, use a simple name; for push, require username
+IMAGE_NAME ?= $(if $(DOCKER_USERNAME),$(DOCKER_USERNAME)/$(DOCKER_REPO),$(DOCKER_REPO))
 PLATFORMS ?= linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64
 
 help:
@@ -32,7 +33,10 @@ help:
 	@echo "  IMAGE_NAME       - Full image name (current: $(IMAGE_NAME))"
 	@echo "  PLATFORMS        - Build platforms (current: $(PLATFORMS))"
 	@echo ""
-	@echo "Quick Start:"
+	@echo "Quick Start (Local Development):"
+	@echo "  make build                    # Build locally without pushing"
+	@echo ""
+	@echo "Quick Start (Push to Registry):"
 	@echo "  export DOCKER_USERNAME=your-username"
 	@echo "  make build-push"
 	@echo ""
@@ -45,19 +49,23 @@ help:
 	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build-push # Build specific platforms and push"
 
 check-docker-username:
-	@if echo "$(IMAGE_NAME)" | grep -q "^/"; then \
+	@if [ -z "$(DOCKER_USERNAME)" ]; then \
 		echo "Error: DOCKER_USERNAME not set and could not be auto-detected."; \
+		echo ""; \
+		echo "Pushing to Docker Hub requires a username."; \
 		echo ""; \
 		echo "Please either:"; \
 		echo "  1. Set DOCKER_USERNAME environment variable:"; \
 		echo "     export DOCKER_USERNAME=your-username"; \
-		echo "     make build"; \
+		echo "     make build-push"; \
 		echo ""; \
 		echo "  2. Override IMAGE_NAME directly:"; \
-		echo "     IMAGE_NAME=your-username/dynipupdate make build"; \
+		echo "     IMAGE_NAME=your-username/dynipupdate make build-push"; \
 		echo ""; \
 		echo "  3. Ensure you're logged in to Docker Hub:"; \
 		echo "     docker login"; \
+		echo ""; \
+		echo "For local builds only, use: make build"; \
 		exit 1; \
 	fi
 
