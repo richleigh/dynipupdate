@@ -1,17 +1,7 @@
 .PHONY: help build push test clean version-tag check-docker-username
 
 # Configuration - can be overridden via environment variables
-# Try multiple methods to detect Docker Hub username:
-# 1. Check DOCKER_USERNAME env var
-# 2. Try to extract from docker config.json
-# 3. Try docker info (shows logged in user on some systems)
-DOCKER_USERNAME ?= $(shell \
-	if [ -n "$$DOCKER_USERNAME" ]; then \
-		echo "$$DOCKER_USERNAME"; \
-	elif [ -f ~/.docker/config.json ]; then \
-		cat ~/.docker/config.json | grep -o '"username"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"username"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | grep -v '^$$'; \
-	fi \
-)
+DOCKER_USERNAME ?= $(shell cat ~/.docker/config.json 2>/dev/null | grep -o '"username":"[^"]*"' | head -1 | cut -d'"' -f4)
 DOCKER_REPO ?= dynipupdate
 IMAGE_NAME ?= $(DOCKER_USERNAME)/$(DOCKER_REPO)
 PLATFORMS ?= linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64
@@ -34,14 +24,10 @@ help:
 	@echo "  PLATFORMS        - Build platforms (current: $(PLATFORMS))"
 	@echo "  DATE             - Build date (current: $(DATE))"
 	@echo ""
-	@echo "Quick Start:"
-	@echo "  export DOCKER_USERNAME=your-username"
-	@echo "  make build"
-	@echo ""
 	@echo "Examples:"
-	@echo "  DOCKER_USERNAME=myuser make build            # Set username"
+	@echo "  make build                                    # Use auto-detected username"
+	@echo "  DOCKER_USERNAME=myuser make build            # Override username"
 	@echo "  IMAGE_NAME=myuser/myrepo make build          # Override full image name"
-	@echo "  PLATFORMS=linux/amd64,linux/arm64 make build # Custom platforms"
 
 # Get the next version number for today
 .PHONY: get-next-version

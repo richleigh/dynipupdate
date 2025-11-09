@@ -9,11 +9,6 @@ This project uses a Makefile with auto-incrementing version tags for Docker buil
    export DOCKER_USERNAME=your-username
    ```
 
-   **Tip:** Add this to your `~/.bashrc`, `~/.zshrc`, or similar to make it permanent:
-   ```bash
-   echo 'export DOCKER_USERNAME=your-username' >> ~/.bashrc
-   ```
-
 2. **Build and push:**
    ```bash
    make build
@@ -25,12 +20,10 @@ The build system supports several environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DOCKER_USERNAME` | Your Docker Hub username | Attempts auto-detection (unreliable) - **recommended to set explicitly** |
+| `DOCKER_USERNAME` | Your Docker Hub username | Auto-detected from `~/.docker/config.json` |
 | `DOCKER_REPO` | Repository name | `dynipupdate` |
 | `IMAGE_NAME` | Full image name (overrides above) | `${DOCKER_USERNAME}/${DOCKER_REPO}` |
 | `PLATFORMS` | Target platforms | `linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/riscv64` |
-
-**Note:** Auto-detection of `DOCKER_USERNAME` may not work reliably across different Docker Desktop versions or when using credential helpers. It's recommended to set it explicitly via environment variable.
 
 ## Available Targets
 
