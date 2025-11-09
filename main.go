@@ -346,20 +346,19 @@ func max(a, b int) int {
 	return b
 }
 
-// heartbeatRecordName creates the TXT record name for a domain's heartbeat
-// Example: "anubis.i.4" -> "_heartbeat.anubis.i.4"
+// heartbeatRecordName returns the domain name for the heartbeat TXT record
+// The heartbeat is stored as a TXT record at the same name as the A/AAAA records
+// Example: "anubis.i.4.bees.wtf" -> "anubis.i.4.bees.wtf" (same name, different type)
 func heartbeatRecordName(domain string) string {
-	if domain == "" {
-		return ""
-	}
-	return fmt.Sprintf("_heartbeat.%s", domain)
+	return domain
 }
 
 // heartbeatContent creates the TXT record content with current timestamp and instance ID
-// Format: "timestamp,instanceID"
+// Format: "timestamp,instanceID" (quoted string with comma-delimited values)
 func heartbeatContent(instanceID string) string {
 	timestamp := time.Now().Unix()
-	return fmt.Sprintf("%d,%s", timestamp, instanceID)
+	// TXT records should be quoted strings
+	return fmt.Sprintf("\"%d,%s\"", timestamp, instanceID)
 }
 
 func getEnvOrExit(key string) string {

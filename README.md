@@ -103,23 +103,24 @@ services:
 
 ## How Heartbeat Cleanup Works
 
-When the updater creates internal or combined domain records, it also creates a heartbeat TXT record:
+When the updater creates internal or combined domain records, it also creates a heartbeat TXT record **at the same domain name**:
 
 ```
 # A record for the IP
 internal.example.com A 192.168.1.10
 
-# Heartbeat TXT record
-_heartbeat.internal.example.com TXT "1699564820,web-container-abc123"
+# Heartbeat TXT record (same name, different type)
+internal.example.com TXT "1699564820,web-container-abc123"
 ```
 
-The heartbeat contains:
-- **Unix timestamp**: When the heartbeat was last updated
-- **Instance ID**: Identifier for the host/container
+The heartbeat TXT record contains:
+- **Unix timestamp**: When the heartbeat was last updated (e.g., 1699564820)
+- **Instance ID**: Identifier for the host/container (e.g., web-container-abc123)
+- Format: `"timestamp,instanceID"` (quoted, comma-delimited)
 
 The cleanup service:
-1. Checks heartbeat TXT records for each domain
-2. If heartbeat is missing or older than threshold, deletes both DNS and heartbeat records
+1. Checks the TXT record at each domain for its heartbeat
+2. If the TXT record is missing or older than threshold, deletes both the A/AAAA and TXT records
 3. Works for ephemeral containers that crash without cleanup
 
 ## Building
