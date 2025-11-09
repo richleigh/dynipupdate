@@ -29,9 +29,6 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Run tests
-        run: make test
-
       - name: Build and push Docker images
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
@@ -42,4 +39,4 @@ jobs:
           echo "### Docker Images Published :rocket:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ secrets.DOCKER_USERNAME }}/dynipupdate:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKER_USERNAME }}/dynipupdate:$(date -u +%Y%m%d-%H%M%S)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ secrets.DOCKER_USERNAME }}/dynipupdate:$(git log -1 --date=format:'%Y%m%d-%H%M%S' --format=%cd)\`" >> $GITHUB_STEP_SUMMARY

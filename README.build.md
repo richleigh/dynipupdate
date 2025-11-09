@@ -102,22 +102,22 @@ Note: `make build` only builds for your current platform, so `make push` will on
 
 ## Examples
 
-### Use auto-detected username
+### Build all platforms (no push)
 ```bash
 make build-push
 ```
 
-### Override username
+### Build and push all platforms in one step
 ```bash
 DOCKER_USERNAME=myuser make build-push
 ```
 
-### Override full image name
+### Debug a specific platform
 ```bash
 IMAGE_NAME=myorg/myapp make build-push
 ```
 
-### Build for specific platforms only
+### Build and push specific platforms only
 ```bash
 PLATFORMS=linux/amd64,linux/arm64 make build-push
 ```
