@@ -35,18 +35,17 @@ cat > /etc/dynipupdate/config.env <<'EOF'
 CF_API_TOKEN=your-cloudflare-api-token-here
 CF_ZONE_ID=your-cloudflare-zone-id-here
 
-# DNS Domain Names (REQUIRED)
-# Specify the EXACT full domain names you want created
-# Examples for zone "example.com":
-#   INTERNAL_DOMAIN=oracle-vm.internal.example.com
-#   COMBINED_DOMAIN=oracle-vm.example.com
-INTERNAL_DOMAIN=oracle-vm.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm.external.example.com
-IPV6_DOMAIN=oracle-vm.ipv6.example.com
-COMBINED_DOMAIN=oracle-vm.example.com
+# DNS Domain Names (set exact names you want)
+INTERNAL_DOMAIN=myhost.internal.example.com
+EXTERNAL_DOMAIN=myhost.external.example.com
+IPV6_DOMAIN=myhost.ipv6.example.com
+COMBINED_DOMAIN=myhost.example.com
 
-# Instance identifier (used in heartbeat) - defaults to hostname if not set
+# Instance identifier (used in heartbeat)
 INSTANCE_ID=oracle-vm-1
+
+# Hostname (auto-detected if not set)
+HOSTNAME=$(hostname)
 
 # CloudFlare Proxy (true/false)
 CF_PROXIED=false

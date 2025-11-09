@@ -157,6 +157,7 @@ func main() {
 	if ips.ExternalIPv4 != "" {
 		if cf.upsertRecord(config.ExternalDomain, "A", ips.ExternalIPv4, config.Proxied) {
 			successCount++
+			log.Printf("Updated external IPv4: %s -> %s", config.ExternalDomain, ips.ExternalIPv4)
 		}
 	} else {
 		log.Println("No external IPv4 address found - deleting any existing record")
@@ -170,6 +171,7 @@ func main() {
 	if ips.ExternalIPv6 != "" {
 		if cf.upsertRecord(config.IPv6Domain, "AAAA", ips.ExternalIPv6, config.Proxied) {
 			successCount++
+			log.Printf("Updated external IPv6: %s -> %s", config.IPv6Domain, ips.ExternalIPv6)
 		}
 	} else {
 		log.Println("No external IPv6 address found - deleting any existing record")
@@ -241,6 +243,7 @@ func main() {
 		if ips.ExternalIPv6 != "" {
 			if cf.upsertRecord(config.CombinedDomain, "AAAA", ips.ExternalIPv6, config.Proxied) {
 				successCount++
+				log.Printf("Updated combined domain IPv6: %s -> %s", config.CombinedDomain, ips.ExternalIPv6)
 			}
 		} else {
 			log.Println("No external IPv6 address found - deleting combined domain AAAA record")
