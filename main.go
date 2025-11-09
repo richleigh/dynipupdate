@@ -131,8 +131,22 @@ func main() {
 }
 
 func loadConfig() *Config {
+	apiToken := getEnvOrExit("CF_API_TOKEN")
+
+	// Trim any whitespace that might have been included
+	apiToken = strings.TrimSpace(apiToken)
+
+	// Debug: Check for common issues
+	if strings.HasPrefix(apiToken, "\"") || strings.HasPrefix(apiToken, "'") {
+		log.Printf("WARNING: API token appears to have quotes around it (len=%d, first char=%q, last char=%q)",
+			len(apiToken), apiToken[0], apiToken[len(apiToken)-1])
+	}
+
+	log.Printf("API token loaded (length: %d chars, starts with: %.8s..., ends with: ...%.4s)",
+		len(apiToken), apiToken, apiToken[max(0, len(apiToken)-4):])
+
 	config := &Config{
-		CFAPIToken: getEnvOrExit("CF_API_TOKEN"),
+		CFAPIToken: apiToken,
 		CFZoneID:   getEnvOrExit("CF_ZONE_ID"),
 		Hostname:   getEnvOrExit("HOSTNAME"),
 	}
@@ -143,6 +157,13 @@ func loadConfig() *Config {
 	config.Proxied = strings.ToLower(os.Getenv("CF_PROXIED")) == "true"
 
 	return config
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func getEnvOrExit(key string) string {
@@ -342,10 +363,25 @@ func (cf *CloudFlareClient) makeRequest(method, path string, body io.Reader) (*h
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+cf.APIToken)
+	authHeader := "Bearer " + cf.APIToken
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
-	return http.DefaultClient.Do(req)
+	// Debug: Log request details (without full token)
+	log.Printf("API Request: %s %s (token length: %d, auth header length: %d)",
+		method, path, len(cf.APIToken), len(authHeader))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Log response status for debugging
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("API Response: %s (status: %d %s)", path, resp.StatusCode, resp.Status)
+	}
+
+	return resp, nil
 }
 
 func (cf *CloudFlareClient) getRecordID(name, recordType string) string {
