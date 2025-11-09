@@ -48,10 +48,11 @@ Set your values:
 CF_API_TOKEN=your-token-here
 CF_ZONE_ID=your-zone-id-here
 
-# Set exact domain names you want created
+# Set exact full domain names you want created
 INTERNAL_DOMAIN=oracle-vm.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm.example.com
+EXTERNAL_DOMAIN=oracle-vm.external.example.com
 IPV6_DOMAIN=oracle-vm.ipv6.example.com
+COMBINED_DOMAIN=oracle-vm.example.com
 
 # Identifier for this VM
 INSTANCE_ID=oracle-free-tier-vm1
@@ -135,14 +136,18 @@ If you have multiple Oracle VMs, configure each with unique domains:
 **VM 1:**
 ```bash
 INTERNAL_DOMAIN=oracle-vm1.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm1.example.com
+EXTERNAL_DOMAIN=oracle-vm1.external.example.com
+IPV6_DOMAIN=oracle-vm1.ipv6.example.com
+COMBINED_DOMAIN=oracle-vm1.example.com
 INSTANCE_ID=oracle-vm1
 ```
 
 **VM 2:**
 ```bash
 INTERNAL_DOMAIN=oracle-vm2.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm2.example.com
+EXTERNAL_DOMAIN=oracle-vm2.external.example.com
+IPV6_DOMAIN=oracle-vm2.ipv6.example.com
+COMBINED_DOMAIN=oracle-vm2.example.com
 INSTANCE_ID=oracle-vm2
 ```
 
