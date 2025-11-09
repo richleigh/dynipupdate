@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # DNS updater - run on every host/container
   dynip-updater:
     build: .
     container_name: dynip-updater
@@ -10,14 +11,13 @@ services:
 
     # Run every 5 minutes (300 seconds)
     entrypoint: |
-      sh -c 'while true; do /dynip-updater; sleep 300; done'
+      sh -c 'while true; do /dynipupdate; sleep 300; done'
 
-    # Optional: Resource limits
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '0.5'
-    #       memory: 128M
-    #     reservations:
-    #       cpus: '0.1'
-    #       memory: 64M
+  # DNS cleanup service - run ONCE per environment (not per host)
+  # Uncomment to enable automatic cleanup of stale DNS records
+  # dynip-cleanup:
+  #   build: .
+  #   container_name: dynip-cleanup
+  #   env_file: .env
+  #   restart: unless-stopped
+  #   command: ["-cleanup"]
