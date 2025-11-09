@@ -21,10 +21,16 @@ var rfc1918Ranges = []string{
 }
 
 // CloudFlare API structures
-type CFResponse struct {
+type CFListResponse struct {
 	Success bool              `json:"success"`
 	Errors  []json.RawMessage `json:"errors"`
 	Result  []CFRecord        `json:"result"`
+}
+
+type CFSingleResponse struct {
+	Success bool              `json:"success"`
+	Errors  []json.RawMessage `json:"errors"`
+	Result  CFRecord          `json:"result"`
 }
 
 type CFRecord struct {
@@ -131,8 +137,22 @@ func main() {
 }
 
 func loadConfig() *Config {
+	apiToken := getEnvOrExit("CF_API_TOKEN")
+
+	// Trim any whitespace that might have been included
+	apiToken = strings.TrimSpace(apiToken)
+
+	// Debug: Check for common issues
+	if strings.HasPrefix(apiToken, "\"") || strings.HasPrefix(apiToken, "'") {
+		log.Printf("WARNING: API token appears to have quotes around it (len=%d, first char=%q, last char=%q)",
+			len(apiToken), apiToken[0], apiToken[len(apiToken)-1])
+	}
+
+	log.Printf("API token loaded (length: %d chars, starts with: %.8s..., ends with: ...%.4s)",
+		len(apiToken), apiToken, apiToken[max(0, len(apiToken)-4):])
+
 	config := &Config{
-		CFAPIToken: getEnvOrExit("CF_API_TOKEN"),
+		CFAPIToken: apiToken,
 		CFZoneID:   getEnvOrExit("CF_ZONE_ID"),
 		Hostname:   getEnvOrExit("HOSTNAME"),
 	}
@@ -143,6 +163,13 @@ func loadConfig() *Config {
 	config.Proxied = strings.ToLower(os.Getenv("CF_PROXIED")) == "true"
 
 	return config
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func getEnvOrExit(key string) string {
@@ -313,12 +340,25 @@ func getExternalIPv6() string {
 	return ""
 }
 
+// CloudFlareAPI defines the interface for CloudFlare DNS operations
+type CloudFlareAPI interface {
+	getRecordID(name, recordType string) string
+	createRecord(name, recordType, content string, proxied bool) bool
+	updateRecord(recordID, name, recordType, content string, proxied bool) bool
+	deleteRecord(recordID, name, recordType string) bool
+	deleteRecordIfExists(name, recordType string) bool
+	upsertRecord(name, recordType, content string, proxied bool) bool
+}
+
 // CloudFlareClient handles CloudFlare API interactions
 type CloudFlareClient struct {
 	APIToken string
 	ZoneID   string
 	BaseURL  string
 }
+
+// Verify CloudFlareClient implements CloudFlareAPI
+var _ CloudFlareAPI = (*CloudFlareClient)(nil)
 
 // formatErrors converts CloudFlare error messages from json.RawMessage to readable strings
 func formatErrors(errors []json.RawMessage) string {
@@ -342,10 +382,25 @@ func (cf *CloudFlareClient) makeRequest(method, path string, body io.Reader) (*h
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+cf.APIToken)
+	authHeader := "Bearer " + cf.APIToken
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
-	return http.DefaultClient.Do(req)
+	// Debug: Log request details (without full token)
+	log.Printf("API Request: %s %s (token length: %d, auth header length: %d)",
+		method, path, len(cf.APIToken), len(authHeader))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Log response status for debugging
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("API Response: %s (status: %d %s)", path, resp.StatusCode, resp.Status)
+	}
+
+	return resp, nil
 }
 
 func (cf *CloudFlareClient) getRecordID(name, recordType string) string {
@@ -358,7 +413,7 @@ func (cf *CloudFlareClient) getRecordID(name, recordType string) string {
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return ""
@@ -395,7 +450,7 @@ func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxi
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFSingleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return false
@@ -434,7 +489,7 @@ func (cf *CloudFlareClient) updateRecord(recordID, name, recordType, content str
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFSingleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return false
@@ -459,7 +514,7 @@ func (cf *CloudFlareClient) deleteRecord(recordID, name, recordType string) bool
 	}
 	defer resp.Body.Close()
 
-	var result CFResponse
+	var result CFSingleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding response: %v", err)
 		return false
