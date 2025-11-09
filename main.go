@@ -61,12 +61,14 @@ type Config struct {
 	InternalDomain string
 	ExternalDomain string
 	IPv6Domain     string
+	CombinedDomain string
+	InstanceID     string
 	Proxied        bool
 }
 
 // IPAddresses holds detected IP addresses
 type IPAddresses struct {
-	InternalIPv4 string
+	InternalIPv4 []string
 	ExternalIPv4 string
 	ExternalIPv6 string
 }
@@ -87,16 +89,75 @@ func main() {
 	successCount := 0
 	totalCount := 0
 
-	// Update internal IPv4 record
-	totalCount++
-	if ips.InternalIPv4 != "" {
-		if cf.upsertRecord(config.InternalDomain, "A", ips.InternalIPv4, config.Proxied) {
-			successCount++
+	// Update internal IPv4 records (support multiple addresses)
+	if len(ips.InternalIPv4) > 0 {
+		// Get all existing records for the internal domain
+		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
+
+		// Create a map of existing record contents for quick lookup
+		existingIPs := make(map[string]string) // content -> recordID
+		for _, record := range existingRecords {
+			existingIPs[record.Content] = record.ID
+		}
+
+		// Create a map of detected IPs
+		detectedIPs := make(map[string]bool)
+		for _, ip := range ips.InternalIPv4 {
+			detectedIPs[ip] = true
+		}
+
+		// Create/update records for each detected IP
+		for _, ip := range ips.InternalIPv4 {
+			totalCount++
+			if cf.ensureRecordExists(config.InternalDomain, "A", ip, config.Proxied) {
+				successCount++
+			}
+
+			// Create/update heartbeat TXT record for this IP
+			heartbeatName := heartbeatRecordName(ip, config.InternalDomain)
+			heartbeatData := heartbeatContent(config.InstanceID)
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for IP %s", ip)
+			}
+		}
+
+		// Delete stale records (IPs that exist in DNS but not in detected list)
+		for content, recordID := range existingIPs {
+			if !detectedIPs[content] {
+				totalCount++
+				log.Printf("Deleting stale internal IPv4 record: %s", content)
+				if cf.deleteRecord(recordID, config.InternalDomain, "A") {
+					successCount++
+				}
+
+				// Also delete the heartbeat TXT record
+				heartbeatName := heartbeatRecordName(content, config.InternalDomain)
+				totalCount++
+				if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+					successCount++
+					log.Printf("Deleted heartbeat for stale IP %s", content)
+				}
+			}
 		}
 	} else {
-		log.Println("No internal IPv4 address found - deleting any existing record")
-		if cf.deleteRecordIfExists(config.InternalDomain, "A") {
-			successCount++
+		// No internal IPs found - delete all existing records
+		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
+		for _, record := range existingRecords {
+			totalCount++
+			log.Printf("No internal IPv4 addresses found - deleting record: %s", record.Content)
+			if cf.deleteRecord(record.ID, config.InternalDomain, "A") {
+				successCount++
+			}
+
+			// Also delete the heartbeat TXT record
+			heartbeatName := heartbeatRecordName(record.Content, config.InternalDomain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for IP %s", record.Content)
+			}
 		}
 	}
 
@@ -123,6 +184,103 @@ func main() {
 		log.Println("No external IPv6 address found - deleting any existing record")
 		if cf.deleteRecordIfExists(config.IPv6Domain, "AAAA") {
 			successCount++
+		}
+	}
+
+	// Update combined domain (all IPs aggregated into one domain)
+	if config.CombinedDomain != "" {
+		log.Printf("Updating combined domain: %s", config.CombinedDomain)
+
+		// Collect all IPv4 addresses (internal + external)
+		var allIPv4s []string
+		allIPv4s = append(allIPv4s, ips.InternalIPv4...)
+		if ips.ExternalIPv4 != "" {
+			allIPv4s = append(allIPv4s, ips.ExternalIPv4)
+		}
+
+		// Update A records for all IPv4s
+		if len(allIPv4s) > 0 {
+			// Get all existing A records for the combined domain
+			existingRecords := cf.getAllRecords(config.CombinedDomain, "A")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range allIPv4s {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each IPv4
+			for _, ip := range allIPv4s {
+				totalCount++
+				if cf.ensureRecordExists(config.CombinedDomain, "A", ip, config.Proxied) {
+					successCount++
+				}
+
+				// Create/update heartbeat TXT record for this IP
+				heartbeatName := heartbeatRecordName(ip, config.CombinedDomain)
+				heartbeatData := heartbeatContent(config.InstanceID)
+				totalCount++
+				if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+					successCount++
+					log.Printf("Updated heartbeat for IP %s on combined domain", ip)
+				}
+			}
+
+			// Delete stale A records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale combined domain A record: %s", content)
+					if cf.deleteRecord(recordID, config.CombinedDomain, "A") {
+						successCount++
+					}
+
+					// Also delete the heartbeat TXT record
+					heartbeatName := heartbeatRecordName(content, config.CombinedDomain)
+					totalCount++
+					if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+						successCount++
+						log.Printf("Deleted heartbeat for stale IP %s on combined domain", content)
+					}
+				}
+			}
+		} else {
+			// No IPv4s found - delete all A records
+			existingRecords := cf.getAllRecords(config.CombinedDomain, "A")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPv4 addresses found - deleting combined domain A record: %s", record.Content)
+				if cf.deleteRecord(record.ID, config.CombinedDomain, "A") {
+					successCount++
+				}
+
+				// Also delete the heartbeat TXT record
+				heartbeatName := heartbeatRecordName(record.Content, config.CombinedDomain)
+				totalCount++
+				if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+					successCount++
+					log.Printf("Deleted heartbeat for IP %s on combined domain", record.Content)
+				}
+			}
+		}
+
+		// Update AAAA record for external IPv6
+		totalCount++
+		if ips.ExternalIPv6 != "" {
+			if cf.upsertRecord(config.CombinedDomain, "AAAA", ips.ExternalIPv6, config.Proxied) {
+				successCount++
+			}
+		} else {
+			log.Println("No external IPv6 address found - deleting combined domain AAAA record")
+			if cf.deleteRecordIfExists(config.CombinedDomain, "AAAA") {
+				successCount++
+			}
 		}
 	}
 
@@ -165,6 +323,8 @@ func loadConfig() *Config {
 	config.InternalDomain = getEnvOrDefault("INTERNAL_DOMAIN", config.Hostname)
 	config.ExternalDomain = getEnvOrDefault("EXTERNAL_DOMAIN", config.Hostname)
 	config.IPv6Domain = getEnvOrDefault("IPV6_DOMAIN", config.Hostname)
+	config.CombinedDomain = getEnvOrDefault("COMBINED_DOMAIN", "")
+	config.InstanceID = getEnvOrDefault("INSTANCE_ID", config.Hostname)
 	config.Proxied = strings.ToLower(os.Getenv("CF_PROXIED")) == "true"
 
 	return config
@@ -175,6 +335,25 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ipToDNSLabel converts an IP address to a DNS-safe label
+// Example: "192.168.1.10" -> "192-168-1-10"
+func ipToDNSLabel(ip string) string {
+	return strings.ReplaceAll(ip, ".", "-")
+}
+
+// heartbeatRecordName creates the TXT record name for a heartbeat
+// Example: "192.168.1.10", "internal.example.com" -> "_heartbeat-192-168-1-10.internal.example.com"
+func heartbeatRecordName(ip, baseDomain string) string {
+	return fmt.Sprintf("_heartbeat-%s.%s", ipToDNSLabel(ip), baseDomain)
+}
+
+// heartbeatContent creates the TXT record content with current timestamp and instance ID
+// Format: "timestamp,instanceID"
+func heartbeatContent(instanceID string) string {
+	timestamp := time.Now().Unix()
+	return fmt.Sprintf("%d,%s", timestamp, instanceID)
 }
 
 func getEnvOrExit(key string) string {
@@ -201,7 +380,7 @@ func detectIPs() *IPAddresses {
 	return ips
 }
 
-func getInternalIPv4() string {
+func getInternalIPv4() []string {
 	// Parse RFC1918 ranges
 	var privateNets []*net.IPNet
 	for _, cidr := range rfc1918Ranges {
@@ -213,8 +392,11 @@ func getInternalIPv4() string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		log.Printf("Error getting network interfaces: %v", err)
-		return ""
+		return []string{}
 	}
+
+	var internalIPs []string
+	seen := make(map[string]bool)
 
 	// Check each interface for RFC1918 addresses
 	for _, iface := range interfaces {
@@ -239,15 +421,25 @@ func getInternalIPv4() string {
 
 			for _, privateNet := range privateNets {
 				if privateNet.Contains(ip) {
-					log.Printf("Found internal IPv4: %s", ip.String())
-					return ip.String()
+					ipStr := ip.String()
+					// Avoid duplicates
+					if !seen[ipStr] {
+						seen[ipStr] = true
+						internalIPs = append(internalIPs, ipStr)
+						log.Printf("Found internal IPv4: %s on interface %s", ipStr, iface.Name)
+					}
 				}
 			}
 		}
 	}
 
-	log.Println("No internal IPv4 address found")
-	return ""
+	if len(internalIPs) == 0 {
+		log.Println("No internal IPv4 addresses found")
+	} else {
+		log.Printf("Found %d internal IPv4 address(es)", len(internalIPs))
+	}
+
+	return internalIPs
 }
 
 func getExternalIPv4() string {
@@ -348,11 +540,14 @@ func getExternalIPv6() string {
 // CloudFlareAPI defines the interface for CloudFlare DNS operations
 type CloudFlareAPI interface {
 	getRecordID(name, recordType string) string
+	getRecord(name, recordType string) *CFRecord
+	getAllRecords(name, recordType string) []CFRecord
 	createRecord(name, recordType, content string, proxied bool) bool
 	updateRecord(recordID, name, recordType, content string, proxied bool) bool
 	deleteRecord(recordID, name, recordType string) bool
 	deleteRecordIfExists(name, recordType string) bool
 	upsertRecord(name, recordType, content string, proxied bool) bool
+	ensureRecordExists(name, recordType, content string, proxied bool) bool
 }
 
 // CloudFlareClient handles CloudFlare API interactions
@@ -431,6 +626,54 @@ func (cf *CloudFlareClient) getRecordID(name, recordType string) string {
 	}
 
 	return ""
+}
+
+// getRecord returns the full record details, or nil if not found
+func (cf *CloudFlareClient) getRecord(name, recordType string) *CFRecord {
+	path := fmt.Sprintf("/zones/%s/dns_records?name=%s&type=%s", cf.ZoneID, name, recordType)
+
+	resp, err := cf.makeRequest("GET", path, nil)
+	if err != nil {
+		log.Printf("Error getting record for %s: %v", name, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var result CFListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return nil
+	}
+
+	if result.Success && len(result.Result) > 0 {
+		return &result.Result[0]
+	}
+
+	return nil
+}
+
+// getAllRecords returns all records matching the name and type
+func (cf *CloudFlareClient) getAllRecords(name, recordType string) []CFRecord {
+	path := fmt.Sprintf("/zones/%s/dns_records?name=%s&type=%s", cf.ZoneID, name, recordType)
+
+	resp, err := cf.makeRequest("GET", path, nil)
+	if err != nil {
+		log.Printf("Error getting records for %s: %v", name, err)
+		return []CFRecord{}
+	}
+	defer resp.Body.Close()
+
+	var result CFListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return []CFRecord{}
+	}
+
+	if result.Success {
+		return result.Result
+	}
+
+	return []CFRecord{}
 }
 
 func (cf *CloudFlareClient) createRecord(name, recordType, content string, proxied bool) bool {
@@ -562,9 +805,32 @@ func (cf *CloudFlareClient) deleteRecordIfExists(name, recordType string) bool {
 }
 
 func (cf *CloudFlareClient) upsertRecord(name, recordType, content string, proxied bool) bool {
-	recordID := cf.getRecordID(name, recordType)
-	if recordID != "" {
-		return cf.updateRecord(recordID, name, recordType, content, proxied)
+	record := cf.getRecord(name, recordType)
+	if record != nil {
+		// Record exists - check if content has changed
+		if record.Content == content {
+			log.Printf("No change needed for %s record %s (already %s)", recordType, name, content)
+			return true
+		}
+		log.Printf("Content changed for %s record %s: %s -> %s", recordType, name, record.Content, content)
+		return cf.updateRecord(record.ID, name, recordType, content, proxied)
 	}
+	return cf.createRecord(name, recordType, content, proxied)
+}
+
+// ensureRecordExists creates a record only if one with this exact content doesn't already exist.
+// This is used for domains with multiple records of the same type (e.g., multiple A records).
+func (cf *CloudFlareClient) ensureRecordExists(name, recordType, content string, proxied bool) bool {
+	allRecords := cf.getAllRecords(name, recordType)
+
+	// Check if a record with this specific content already exists
+	for _, record := range allRecords {
+		if record.Content == content {
+			log.Printf("No change needed for %s record %s (already %s)", recordType, name, content)
+			return true
+		}
+	}
+
+	// Record with this content doesn't exist - create it
 	return cf.createRecord(name, recordType, content, proxied)
 }
