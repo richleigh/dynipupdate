@@ -252,3 +252,176 @@ func TestCFErrorCode81058(t *testing.T) {
 		t.Errorf("Expected message 'An identical record already exists.', got %s", cfErr.Message)
 	}
 }
+
+// MockCloudFlareClient implements CloudFlareAPI for testing
+type MockCloudFlareClient struct {
+	records       map[string]*CFRecord // key: "name:type"
+	updateCalled  int
+	createCalled  int
+	deleteCalled  int
+}
+
+func (m *MockCloudFlareClient) getRecordID(name, recordType string) string {
+	key := name + ":" + recordType
+	if record, exists := m.records[key]; exists {
+		return record.ID
+	}
+	return ""
+}
+
+func (m *MockCloudFlareClient) getRecord(name, recordType string) *CFRecord {
+	key := name + ":" + recordType
+	if record, exists := m.records[key]; exists {
+		return record
+	}
+	return nil
+}
+
+func (m *MockCloudFlareClient) createRecord(name, recordType, content string, proxied bool) bool {
+	m.createCalled++
+	key := name + ":" + recordType
+	m.records[key] = &CFRecord{
+		ID:      "test-id-" + key,
+		Type:    recordType,
+		Name:    name,
+		Content: content,
+	}
+	return true
+}
+
+func (m *MockCloudFlareClient) updateRecord(recordID, name, recordType, content string, proxied bool) bool {
+	m.updateCalled++
+	key := name + ":" + recordType
+	if record, exists := m.records[key]; exists {
+		record.Content = content
+	}
+	return true
+}
+
+func (m *MockCloudFlareClient) deleteRecord(recordID, name, recordType string) bool {
+	m.deleteCalled++
+	key := name + ":" + recordType
+	delete(m.records, key)
+	return true
+}
+
+func (m *MockCloudFlareClient) deleteRecordIfExists(name, recordType string) bool {
+	recordID := m.getRecordID(name, recordType)
+	if recordID != "" {
+		return m.deleteRecord(recordID, name, recordType)
+	}
+	return true
+}
+
+func (m *MockCloudFlareClient) upsertRecord(name, recordType, content string, proxied bool) bool {
+	record := m.getRecord(name, recordType)
+	if record != nil {
+		// Record exists - check if content has changed
+		if record.Content == content {
+			// No change needed
+			return true
+		}
+		return m.updateRecord(record.ID, name, recordType, content, proxied)
+	}
+	return m.createRecord(name, recordType, content, proxied)
+}
+
+// TestUpsertRecordNoChange verifies that upsertRecord doesn't call update when content is unchanged
+func TestUpsertRecordNoChange(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string]*CFRecord),
+	}
+
+	// Create initial record
+	mock.records["example.com:A"] = &CFRecord{
+		ID:      "test-123",
+		Type:    "A",
+		Name:    "example.com",
+		Content: "192.168.1.1",
+	}
+
+	// Call upsert with same content
+	result := mock.upsertRecord("example.com", "A", "192.168.1.1", false)
+
+	if !result {
+		t.Error("Expected upsertRecord to return true")
+	}
+
+	if mock.updateCalled != 0 {
+		t.Errorf("Expected updateRecord not to be called, but was called %d times", mock.updateCalled)
+	}
+
+	if mock.createCalled != 0 {
+		t.Errorf("Expected createRecord not to be called, but was called %d times", mock.createCalled)
+	}
+}
+
+// TestUpsertRecordContentChanged verifies that upsertRecord DOES call update when content changes
+func TestUpsertRecordContentChanged(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string]*CFRecord),
+	}
+
+	// Create initial record
+	mock.records["example.com:A"] = &CFRecord{
+		ID:      "test-123",
+		Type:    "A",
+		Name:    "example.com",
+		Content: "192.168.1.1",
+	}
+
+	// Call upsert with different content
+	result := mock.upsertRecord("example.com", "A", "192.168.1.2", false)
+
+	if !result {
+		t.Error("Expected upsertRecord to return true")
+	}
+
+	if mock.updateCalled != 1 {
+		t.Errorf("Expected updateRecord to be called exactly once, but was called %d times", mock.updateCalled)
+	}
+
+	if mock.createCalled != 0 {
+		t.Errorf("Expected createRecord not to be called, but was called %d times", mock.createCalled)
+	}
+
+	// Verify content was actually updated
+	record := mock.getRecord("example.com", "A")
+	if record == nil {
+		t.Fatal("Record should still exist")
+	}
+	if record.Content != "192.168.1.2" {
+		t.Errorf("Expected content to be updated to 192.168.1.2, got %s", record.Content)
+	}
+}
+
+// TestUpsertRecordCreate verifies that upsertRecord calls create when record doesn't exist
+func TestUpsertRecordCreate(t *testing.T) {
+	mock := &MockCloudFlareClient{
+		records: make(map[string]*CFRecord),
+	}
+
+	// Call upsert for non-existent record
+	result := mock.upsertRecord("example.com", "A", "192.168.1.1", false)
+
+	if !result {
+		t.Error("Expected upsertRecord to return true")
+	}
+
+	if mock.createCalled != 1 {
+		t.Errorf("Expected createRecord to be called exactly once, but was called %d times", mock.createCalled)
+	}
+
+	if mock.updateCalled != 0 {
+		t.Errorf("Expected updateRecord not to be called, but was called %d times", mock.updateCalled)
+	}
+
+	// Verify record was created
+	record := mock.getRecord("example.com", "A")
+	if record == nil {
+		t.Fatal("Record should have been created")
+	}
+	if record.Content != "192.168.1.1" {
+		t.Errorf("Expected content to be 192.168.1.1, got %s", record.Content)
+	}
+}
