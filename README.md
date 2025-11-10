@@ -79,6 +79,52 @@ Typically scheduled with cron:
 */5 * * * * docker run --rm --env-file /path/to/.env dynipupdate
 ```
 
+### Usage Examples
+
+**Simple setup (just combined domain):**
+```bash
+# .env configuration
+COMBINED_DOMAIN=anubis.bees.wtf
+
+# Results in DNS:
+anubis.bees.wtf A 192.168.1.10        # internal IP
+anubis.bees.wtf A 203.0.113.45        # external IP
+anubis.bees.wtf AAAA 2001:db8::1      # external IPv6
+anubis.bees.wtf TXT "1699564820"      # heartbeat
+```
+
+**With friendly CNAME alias:**
+```bash
+# .env configuration
+COMBINED_DOMAIN=anubis.bees.wtf
+TOP_LEVEL_DOMAIN=anubis.example.com
+
+# Results in DNS:
+anubis.bees.wtf A 192.168.1.10
+anubis.bees.wtf A 203.0.113.45
+anubis.bees.wtf AAAA 2001:db8::1
+anubis.bees.wtf TXT "1699564820"
+
+anubis.example.com CNAME anubis.bees.wtf  # friendly alias
+anubis.example.com TXT "1699564820"       # also gets heartbeat
+
+# Users can now use either name:
+ssh anubis.example.com    # resolves via CNAME
+ssh anubis.bees.wtf       # resolves directly
+```
+
+**Full setup (all domains):**
+```bash
+# .env configuration
+INTERNAL_DOMAIN=anubis.i.4.bees.wtf
+EXTERNAL_DOMAIN=anubis.e.4.bees.wtf
+IPV6_DOMAIN=anubis.6.bees.wtf
+COMBINED_DOMAIN=anubis.bees.wtf
+TOP_LEVEL_DOMAIN=anubis.example.com
+
+# Results in separate purpose-specific domains plus combined
+```
+
 ### Cleanup Mode
 
 Run as a long-running service to automatically remove stale DNS records:
@@ -138,7 +184,7 @@ The heartbeat TXT record contains:
 1. Each time the updater runs, it updates the TXT record with the current timestamp
 2. The cleanup service scans **all TXT records in the zone** to discover heartbeats
 3. For each heartbeat, it checks if the timestamp is stale (default: older than 1 hour)
-4. If stale, cleanup deletes ALL records for that domain (A/AAAA and TXT)
+4. If stale, cleanup deletes ALL records for that domain (A/AAAA/CNAME/TXT)
 5. This automatically weeds out dead processes/containers hanging around for no good reason
 
 **Key features:**
@@ -146,6 +192,7 @@ The heartbeat TXT record contains:
 - **Zone-wide scanning**: Finds all domains with heartbeats across your entire zone
 - **Keeps DNS clean**: Any host that stops updating its heartbeat gets cleaned up
 - **Un-sanctioned removal**: Domains without valid heartbeats are automatically removed
+- **CNAME cleanup**: Top-level CNAME aliases are also removed when stale
 
 ## Building
 
