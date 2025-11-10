@@ -63,7 +63,7 @@ type Config struct {
 	ExternalDomain  string
 	IPv6Domain      string
 	CombinedDomain  string
-	TopLevelDomain  string // CNAME alias pointing to CombinedDomain
+	InstanceID      string
 	Proxied         bool
 	StaleThreshold  int // seconds (for cleanup mode)
 	CleanupInterval int // seconds (for cleanup mode)
@@ -328,7 +328,28 @@ func loadConfig(cleanupMode bool) *Config {
 		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
 		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
 		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
-		TopLevelDomain:  os.Getenv("TOP_LEVEL_DOMAIN"),
+		Proxied:         strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
+		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
+		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
+	}
+
+	// In cleanup mode, domains are optional (cleanup whichever are configured)
+	// In update mode, at least one domain must be configured
+	if !cleanupMode {
+		if config.InternalDomain == "" && config.ExternalDomain == "" &&
+		   config.IPv6Domain == "" && config.CombinedDomain == "" {
+			log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, or COMBINED_DOMAIN)")
+		}
+	}
+
+	config := &Config{
+		CFAPIToken:      apiToken,
+		CFZoneID:        getEnvOrExit("CF_ZONE_ID"),
+		InternalDomain:  os.Getenv("INTERNAL_DOMAIN"),
+		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
+		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
+		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
+		InstanceID:      getEnvOrDefault("INSTANCE_ID", machineHostname),
 		Proxied:         strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
 		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
 		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
@@ -345,9 +366,12 @@ func loadConfig(cleanupMode bool) *Config {
 
 	if cleanupMode {
 		log.Printf("Cleanup Configuration:")
+		log.Printf("  Internal Domain: %s", config.InternalDomain)
+		log.Printf("  External Domain: %s", config.ExternalDomain)
+		log.Printf("  IPv6 Domain: %s", config.IPv6Domain)
+		log.Printf("  Combined Domain: %s", config.CombinedDomain)
 		log.Printf("  Stale Threshold: %d seconds", config.StaleThreshold)
 		log.Printf("  Cleanup Interval: %d seconds", config.CleanupInterval)
-		log.Printf("  Mode: Automatic discovery (scans all TXT records in zone)")
 	}
 
 	return config
@@ -914,79 +938,104 @@ func runCleanupService(cf *CloudFlareClient, config *Config) {
 func runCleanup(cf *CloudFlareClient, config *Config) {
 	log.Println("Running cleanup cycle...")
 
-	// Get all TXT records in the zone (potential heartbeats)
-	txtRecords := cf.getAllRecordsByType("TXT")
-	log.Printf("Found %d TXT records in zone", len(txtRecords))
-
 	totalDeleted := 0
-	staleDomains := make(map[string]string) // domain -> reason
 
-	// Check each TXT record to see if it's a heartbeat and if it's stale
-	for _, txtRecord := range txtRecords {
-		content := strings.Trim(txtRecord.Content, "\"")
+	// Cleanup internal domain (A records only) if configured
+	if config.InternalDomain != "" {
+		deleted := cleanupDomain(cf, config.InternalDomain, "A", config.StaleThreshold)
+		totalDeleted += deleted
+		log.Printf("Deleted %d stale A records from %s", deleted, config.InternalDomain)
+	}
 
-		// Try to parse as a timestamp (heartbeat format)
-		timestamp, err := strconv.ParseInt(content, 10, 64)
-		if err != nil {
-			// Not a heartbeat (not a valid timestamp)
-			continue
-		}
+	// Cleanup external domain (A records only) if configured
+	if config.ExternalDomain != "" {
+		deleted := cleanupDomain(cf, config.ExternalDomain, "A", config.StaleThreshold)
+		totalDeleted += deleted
+		log.Printf("Deleted %d stale A records from %s", deleted, config.ExternalDomain)
+	}
 
-		// Check if heartbeat is stale
-		age := time.Now().Unix() - timestamp
-		if age > int64(config.StaleThreshold) {
-			staleDomains[txtRecord.Name] = fmt.Sprintf("stale heartbeat (age: %ds)", age)
+	// Cleanup IPv6 domain (AAAA records only) if configured
+	if config.IPv6Domain != "" {
+		deleted := cleanupDomain(cf, config.IPv6Domain, "AAAA", config.StaleThreshold)
+		totalDeleted += deleted
+		log.Printf("Deleted %d stale AAAA records from %s", deleted, config.IPv6Domain)
+	}
+
+	// Cleanup combined domain (both A and AAAA records) if configured
+	if config.CombinedDomain != "" {
+		deletedA := cleanupDomain(cf, config.CombinedDomain, "A", config.StaleThreshold)
+		deletedAAAA := cleanupDomain(cf, config.CombinedDomain, "AAAA", config.StaleThreshold)
+		totalDeleted += deletedA + deletedAAAA
+		log.Printf("Deleted %d stale A and %d stale AAAA records from %s", deletedA, deletedAAAA, config.CombinedDomain)
+	}
+
+	log.Printf("Cleanup cycle complete. Total deleted: %d", totalDeleted)
+}
+
+func cleanupDomain(cf *CloudFlareClient, domain string, recordType string, staleThresholdSeconds int) int {
+	deletedCount := 0
+
+	if domain == "" {
+		return 0
+	}
+
+	// Check the heartbeat for this domain
+	heartbeatName := heartbeatRecordName(domain)
+	heartbeatRecords := cf.getAllRecords(heartbeatName, "TXT")
+
+	shouldDelete := false
+	deleteReason := ""
+
+	if len(heartbeatRecords) == 0 {
+		// No heartbeat found - domain is stale
+		shouldDelete = true
+		deleteReason = "no heartbeat found"
+	} else {
+		// Parse the heartbeat content: "timestamp,instanceID"
+		heartbeatContent := heartbeatRecords[0].Content
+		// Remove quotes if present (CloudFlare returns TXT records with quotes)
+		heartbeatContent = strings.Trim(heartbeatContent, "\"")
+
+		parts := strings.Split(heartbeatContent, ",")
+		if len(parts) < 1 {
+			log.Printf("Invalid heartbeat format for %s: %s", domain, heartbeatContent)
+			shouldDelete = true
+			deleteReason = "invalid heartbeat format"
+		} else {
+			timestamp, err := strconv.ParseInt(parts[0], 10, 64)
+			if err != nil {
+				log.Printf("Invalid timestamp in heartbeat for %s: %s", domain, parts[0])
+				shouldDelete = true
+				deleteReason = "invalid timestamp"
+			} else {
+				// Check if heartbeat is stale
+				age := time.Now().Unix() - timestamp
+				if age > int64(staleThresholdSeconds) {
+					shouldDelete = true
+					deleteReason = fmt.Sprintf("stale heartbeat (age: %ds)", age)
+				}
+			}
 		}
 	}
 
-	if len(staleDomains) == 0 {
-		log.Println("No stale domains found")
-		log.Printf("Cleanup cycle complete. Total deleted: 0")
-		return
-	}
+	if shouldDelete {
+		log.Printf("Deleting %s %s records (%s)", domain, recordType, deleteReason)
 
-	log.Printf("Found %d stale domain(s) to clean up", len(staleDomains))
-
-	// Delete all records for stale domains
-	for domain, reason := range staleDomains {
-		log.Printf("Cleaning up stale domain: %s (%s)", domain, reason)
-
-		// Delete A records
-		aRecords := cf.getAllRecords(domain, "A")
-		for _, record := range aRecords {
-			if cf.deleteRecord(record.ID, record.Name, "A") {
-				totalDeleted++
-				log.Printf("  Deleted A record: %s -> %s", record.Name, record.Content)
+		// Delete all records of this type for the domain
+		records := cf.getAllRecords(domain, recordType)
+		for _, record := range records {
+			if cf.deleteRecord(record.ID, record.Name, recordType) {
+				deletedCount++
+				log.Printf("  Deleted %s record: %s -> %s", recordType, record.Name, record.Content)
 			}
 		}
 
-		// Delete AAAA records
-		aaaaRecords := cf.getAllRecords(domain, "AAAA")
-		for _, record := range aaaaRecords {
-			if cf.deleteRecord(record.ID, record.Name, "AAAA") {
-				totalDeleted++
-				log.Printf("  Deleted AAAA record: %s -> %s", record.Name, record.Content)
-			}
-		}
-
-		// Delete CNAME records
-		cnameRecords := cf.getAllRecords(domain, "CNAME")
-		for _, record := range cnameRecords {
-			if cf.deleteRecord(record.ID, record.Name, "CNAME") {
-				totalDeleted++
-				log.Printf("  Deleted CNAME record: %s -> %s", record.Name, record.Content)
-			}
-		}
-
-		// Delete TXT heartbeat record
-		txtRecords := cf.getAllRecords(domain, "TXT")
-		for _, record := range txtRecords {
-			if cf.deleteRecord(record.ID, record.Name, "TXT") {
-				totalDeleted++
-				log.Printf("  Deleted TXT heartbeat: %s", record.Name)
-			}
+		// Delete the heartbeat TXT record
+		if len(heartbeatRecords) > 0 {
+			cf.deleteRecord(heartbeatRecords[0].ID, heartbeatName, "TXT")
+			log.Printf("  Deleted heartbeat: %s", heartbeatName)
 		}
 	}
 
-	log.Printf("Cleanup cycle complete. Total deleted: %d records from %d domain(s)", totalDeleted, len(staleDomains))
+	return deletedCount
 }
