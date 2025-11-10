@@ -29,11 +29,10 @@ All configuration is done via environment variables. See `.env.example` for a co
 |----------|-------------|
 | `CF_API_TOKEN` | CloudFlare API token (create at https://dash.cloudflare.com/profile/api-tokens) |
 | `CF_ZONE_ID` | CloudFlare Zone ID (found in domain overview) |
-| `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `anubis.i.4.bees.wtf`) |
-| `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `anubis.e.4.bees.wtf`) |
-| `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `anubis.6.bees.wtf`) |
-| `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `anubis.bees.wtf`) - **use this!** |
-| `TOP_LEVEL_DOMAIN` | **Optional** - CNAME alias pointing to COMBINED_DOMAIN (e.g., `anubis.example.com`) |
+| `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `host.internal.example.com`) |
+| `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `host.external.example.com`) |
+| `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `host.ipv6.example.com`) |
+| `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `host.example.com`) - **use this!** |
 
 **Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
 - From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
@@ -119,33 +118,24 @@ services:
 
 ## How Heartbeat Cleanup Works
 
-When the updater runs, it creates/updates a heartbeat TXT record **at the same domain name** as the A/AAAA records:
+When the updater creates internal or combined domain records, it also creates a heartbeat TXT record:
 
 ```
-# Multiple A records for the IPs
-anubis.i.4.bees.wtf A 192.168.1.10
-anubis.i.4.bees.wtf A 192.168.1.11
+# A record for the IP
+internal.example.com A 192.168.1.10
 
-# ONE heartbeat TXT record (same name, different type)
-anubis.i.4.bees.wtf TXT "1699564820"
+# Heartbeat TXT record
+_heartbeat.internal.example.com TXT "1699564820,web-container-abc123"
 ```
 
-The heartbeat TXT record contains:
-- **Unix timestamp**: When the updater last ran (e.g., 1699564820)
-- Format: `"timestamp"` (quoted string)
+The heartbeat contains:
+- **Unix timestamp**: When the heartbeat was last updated
+- **Instance ID**: Identifier for the host/container
 
-**How it works:**
-1. Each time the updater runs, it updates the TXT record with the current timestamp
-2. The cleanup service scans **all TXT records in the zone** to discover heartbeats
-3. For each heartbeat, it checks if the timestamp is stale (default: older than 1 hour)
-4. If stale, cleanup deletes ALL records for that domain (A/AAAA and TXT)
-5. This automatically weeds out dead processes/containers hanging around for no good reason
-
-**Key features:**
-- **Automatic discovery**: Cleanup doesn't need to know domain names in advance
-- **Zone-wide scanning**: Finds all domains with heartbeats across your entire zone
-- **Keeps DNS clean**: Any host that stops updating its heartbeat gets cleaned up
-- **Un-sanctioned removal**: Domains without valid heartbeats are automatically removed
+The cleanup service:
+1. Checks heartbeat TXT records for each domain
+2. If heartbeat is missing or older than threshold, deletes both DNS and heartbeat records
+3. Works for ephemeral containers that crash without cleanup
 
 ## Building
 
