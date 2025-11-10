@@ -63,6 +63,7 @@ type Config struct {
 	ExternalDomain  string
 	IPv6Domain      string
 	CombinedDomain  string
+	TopLevelDomain  string // CNAME alias pointing to CombinedDomain
 	Proxied         bool
 	StaleThreshold  int // seconds (for cleanup mode)
 	CleanupInterval int // seconds (for cleanup mode)
@@ -267,6 +268,29 @@ func main() {
 		}
 	}
 
+	// Update top-level CNAME alias (points to combined domain)
+	if config.TopLevelDomain != "" && config.CombinedDomain != "" {
+		log.Printf("Updating top-level CNAME alias: %s", config.TopLevelDomain)
+
+		// Create/update CNAME record pointing to combined domain
+		totalCount++
+		if cf.upsertRecord(config.TopLevelDomain, "CNAME", config.CombinedDomain, config.Proxied) {
+			successCount++
+			log.Printf("Updated CNAME: %s -> %s", config.TopLevelDomain, config.CombinedDomain)
+		}
+
+		// Create/update heartbeat for top-level domain
+		heartbeatName := heartbeatRecordName(config.TopLevelDomain)
+		heartbeatData := heartbeatContent()
+		totalCount++
+		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+			successCount++
+			log.Printf("Updated heartbeat for %s", config.TopLevelDomain)
+		}
+	} else if config.TopLevelDomain != "" && config.CombinedDomain == "" {
+		log.Println("WARNING: TOP_LEVEL_DOMAIN is set but COMBINED_DOMAIN is not - skipping CNAME creation")
+	}
+
 	// Report results
 	log.Printf("Completed: %d/%d records updated successfully\n", successCount, totalCount)
 
@@ -304,6 +328,7 @@ func loadConfig(cleanupMode bool) *Config {
 		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
 		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
 		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
+		TopLevelDomain:  os.Getenv("TOP_LEVEL_DOMAIN"),
 		Proxied:         strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
 		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
 		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
@@ -941,6 +966,15 @@ func runCleanup(cf *CloudFlareClient, config *Config) {
 			if cf.deleteRecord(record.ID, record.Name, "AAAA") {
 				totalDeleted++
 				log.Printf("  Deleted AAAA record: %s -> %s", record.Name, record.Content)
+			}
+		}
+
+		// Delete CNAME records
+		cnameRecords := cf.getAllRecords(domain, "CNAME")
+		for _, record := range cnameRecords {
+			if cf.deleteRecord(record.ID, record.Name, "CNAME") {
+				totalDeleted++
+				log.Printf("  Deleted CNAME record: %s -> %s", record.Name, record.Content)
 			}
 		}
 

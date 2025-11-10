@@ -29,15 +29,32 @@ All configuration is done via environment variables. See `.env.example` for a co
 |----------|-------------|
 | `CF_API_TOKEN` | CloudFlare API token (create at https://dash.cloudflare.com/profile/api-tokens) |
 | `CF_ZONE_ID` | CloudFlare Zone ID (found in domain overview) |
-| `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `host.internal.example.com`) |
-| `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `host.external.example.com`) |
-| `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `host.ipv6.example.com`) |
-| `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `host.example.com`) - **use this!** |
+| `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `anubis.i.4.bees.wtf`) |
+| `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `anubis.e.4.bees.wtf`) |
+| `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `anubis.6.bees.wtf`) |
+| `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `anubis.bees.wtf`) - **use this!** |
+| `TOP_LEVEL_DOMAIN` | **Optional** - CNAME alias pointing to COMBINED_DOMAIN (e.g., `anubis.example.com`) |
 
 **Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
 - From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
 - From the internet: resolves to external IPv4 and IPv6
 - Your OS/browser automatically picks the best route
+
+**Why TOP_LEVEL_DOMAIN?** Optional friendly alias via CNAME:
+- Points to COMBINED_DOMAIN (e.g., `anubis.example.com` -> `anubis.bees.wtf`)
+- Users can use the friendly name, DNS resolves through CNAME to get all IPs
+- Also gets a heartbeat TXT record for automatic cleanup
+- Example:
+  ```
+  # Combined domain with actual IPs
+  anubis.bees.wtf A 192.168.1.10
+  anubis.bees.wtf AAAA 2001:db8::1
+  anubis.bees.wtf TXT "1699564820"
+
+  # Top-level CNAME alias
+  anubis.example.com CNAME anubis.bees.wtf
+  anubis.example.com TXT "1699564820"
+  ```
 
 ### Optional Variables
 
