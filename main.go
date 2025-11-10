@@ -268,6 +268,29 @@ func main() {
 		}
 	}
 
+	// Update top-level CNAME alias (points to combined domain)
+	if config.TopLevelDomain != "" && config.CombinedDomain != "" {
+		log.Printf("Updating top-level CNAME alias: %s", config.TopLevelDomain)
+
+		// Create/update CNAME record pointing to combined domain
+		totalCount++
+		if cf.upsertRecord(config.TopLevelDomain, "CNAME", config.CombinedDomain, config.Proxied) {
+			successCount++
+			log.Printf("Updated CNAME: %s -> %s", config.TopLevelDomain, config.CombinedDomain)
+		}
+
+		// Create/update heartbeat for top-level domain
+		heartbeatName := heartbeatRecordName(config.TopLevelDomain)
+		heartbeatData := heartbeatContent()
+		totalCount++
+		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+			successCount++
+			log.Printf("Updated heartbeat for %s", config.TopLevelDomain)
+		}
+	} else if config.TopLevelDomain != "" && config.CombinedDomain == "" {
+		log.Println("WARNING: TOP_LEVEL_DOMAIN is set but COMBINED_DOMAIN is not - skipping CNAME creation")
+	}
+
 	// Report results
 	log.Printf("Completed: %d/%d records updated successfully\n", successCount, totalCount)
 

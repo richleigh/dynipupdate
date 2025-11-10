@@ -39,6 +39,22 @@ All configuration is done via environment variables. See `.env.example` for a co
 - From the internet: resolves to external IPv4 and IPv6
 - Your OS/browser automatically picks the best route
 
+**Why TOP_LEVEL_DOMAIN?** Optional friendly alias via CNAME:
+- Points to COMBINED_DOMAIN (e.g., `anubis.example.com` -> `anubis.bees.wtf`)
+- Users can use the friendly name, DNS resolves through CNAME to get all IPs
+- Also gets a heartbeat TXT record for automatic cleanup
+- Example:
+  ```
+  # Combined domain with actual IPs
+  anubis.bees.wtf A 192.168.1.10
+  anubis.bees.wtf AAAA 2001:db8::1
+  anubis.bees.wtf TXT "1699564820"
+
+  # Top-level CNAME alias
+  anubis.example.com CNAME anubis.bees.wtf
+  anubis.example.com TXT "1699564820"
+  ```
+
 ### Optional Variables
 
 | Variable | Description | Default |
