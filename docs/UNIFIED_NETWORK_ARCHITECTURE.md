@@ -530,7 +530,8 @@ Layer 2: Host Firewalls (iptables/nftables)
 
 Layer 3: Application Auth
    ├─ Require Authentik SSO for web apps
-   ├─ Use strong passwords/MFA
+   ├─ Use strong passwords/MFA (hardware keys recommended)
+   ├─ Hardware security keys (YubiKey) for admin accounts
    └─ Regular access reviews
 
 Layer 4: Network Segmentation
@@ -565,7 +566,11 @@ iptables -P INPUT DROP
 
 ### Authentik Security
 
-- Enable MFA for all admin accounts
+- **Enable MFA for all admin accounts** (hardware keys strongly recommended)
+- **Use hardware security keys** (YubiKey) - see [YubiKey Setup Guide](YUBIKEY_SETUP.md)
+  - Buy 2 keys minimum (primary + backup)
+  - Set up TOTP and recovery codes as backup methods
+  - Never rely on single authentication method
 - Use strong passwords (generated)
 - Regular backups of PostgreSQL database
 - Keep Authentik updated
@@ -830,6 +835,7 @@ Each component works independently, so you can deploy incrementally.
 
 - [dynipupdate README](../README.md)
 - [Authentik Deployment Guide](../deploy/authentik/README.md)
+- [YubiKey Setup Guide](YUBIKEY_SETUP.md) - Hardware security keys with backup strategies
 - [Tailscale Documentation](https://tailscale.com/kb/)
 - [Consul Documentation](https://www.consul.io/docs)
 - [CloudFlare API Docs](https://developers.cloudflare.com/api/)

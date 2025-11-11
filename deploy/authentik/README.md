@@ -239,6 +239,51 @@ docker-compose exec -T postgresql pg_dump -U authentik authentik > backup-$(date
 docker-compose exec -T postgresql psql -U authentik authentik < backup-20231115.sql
 ```
 
+## Hardware Security Keys (YubiKey)
+
+For enhanced security, use hardware security keys like YubiKey for MFA.
+
+### Why Hardware Keys?
+
+- **Phishing-resistant**: Cannot be intercepted or replayed
+- **No codes to type**: Just touch the key
+- **Works offline**: No phone or internet needed
+- **FIDO2/WebAuthn**: Modern, standardized protocol
+
+### Quick Setup
+
+**Important: Buy 2 keys (primary + backup) to avoid lockout!**
+
+1. **Enable WebAuthn in Authentik** (already configured in default flows)
+
+2. **Enroll your YubiKey**:
+   - Log into Authentik user settings
+   - Go to **MFA Devices** → **WebAuthn**
+   - Click **Enroll WebAuthn Device**
+   - Name it (e.g., "YubiKey Primary")
+   - Touch your YubiKey when prompted
+
+3. **Enroll backup key**:
+   - Repeat with second YubiKey
+   - Name it "YubiKey Backup"
+   - Store in safe place (not with primary!)
+
+4. **Set up recovery methods**:
+   - Enable TOTP (authenticator app) as backup
+   - Generate and print recovery codes
+   - Store recovery codes in safe
+
+### Comprehensive Guide
+
+See [YubiKey Setup Guide](../../docs/YUBIKEY_SETUP.md) for:
+- Detailed enrollment instructions
+- Backup strategies (never lock yourself out)
+- Recovery procedures
+- Integration with Tailscale and other services
+- Troubleshooting
+
+**Recommended**: YubiKey 5 NFC ($55 × 2 = $110 for primary + backup)
+
 ## Troubleshooting
 
 ### Can't Access Initial Setup Page
