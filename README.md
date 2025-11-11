@@ -135,10 +135,14 @@ docker run --rm --env-file .env dynipupdate -cleanup
 
 The cleanup service:
 - Monitors heartbeat TXT records created by the updater
+- **ONLY cleans up domains explicitly configured in your .env file** (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, etc.)
 - Deletes DNS records when heartbeats are missing or stale
 - Runs continuously, checking at `CLEANUP_INTERVAL_SECONDS`
 
-**Deploy ONCE per environment** (not per host). The cleanup service monitors all records.
+**IMPORTANT SAFETY NOTES:**
+- **At least one domain MUST be configured** - cleanup will not run without configured domains
+- **Only affects YOUR configured domains** - will never touch other domains in the zone
+- **Deploy ONCE per environment** (not per host) - the cleanup service monitors all your managed records
 
 ## Docker Deployment
 

@@ -334,20 +334,17 @@ func loadConfig(cleanupMode bool) *Config {
 		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
 	}
 
-	// In cleanup mode, domains are optional (cleanup whichever are configured)
-	// In update mode, at least one domain must be configured
-	if !cleanupMode {
-		if config.InternalDomain == "" && config.ExternalDomain == "" &&
-		   config.IPv6Domain == "" && config.CombinedDomain == "" {
-			log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, or COMBINED_DOMAIN)")
-		}
+	// At least one domain must be configured (both modes require this for safety)
+	if config.InternalDomain == "" && config.ExternalDomain == "" &&
+	   config.IPv6Domain == "" && config.CombinedDomain == "" && config.TopLevelDomain == "" {
+		log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, COMBINED_DOMAIN, or TOP_LEVEL_DOMAIN)")
 	}
 
 	if cleanupMode {
 		log.Printf("Cleanup Configuration:")
 		log.Printf("  Stale Threshold: %d seconds", config.StaleThreshold)
 		log.Printf("  Cleanup Interval: %d seconds", config.CleanupInterval)
-		log.Printf("  Mode: Automatic discovery (scans all TXT records in zone)")
+		log.Printf("  Mode: Will only clean up configured managed domains")
 	}
 
 	return config
@@ -358,6 +355,14 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func getMapKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // heartbeatRecordName returns the domain name for the heartbeat TXT record
@@ -914,6 +919,30 @@ func runCleanupService(cf *CloudFlareClient, config *Config) {
 func runCleanup(cf *CloudFlareClient, config *Config) {
 	log.Println("Running cleanup cycle...")
 
+	// Build list of managed domains (only clean up domains we're responsible for)
+	managedDomains := make(map[string]bool)
+	if config.InternalDomain != "" {
+		managedDomains[config.InternalDomain] = true
+	}
+	if config.ExternalDomain != "" {
+		managedDomains[config.ExternalDomain] = true
+	}
+	if config.IPv6Domain != "" {
+		managedDomains[config.IPv6Domain] = true
+	}
+	if config.CombinedDomain != "" {
+		managedDomains[config.CombinedDomain] = true
+	}
+	if config.TopLevelDomain != "" {
+		managedDomains[config.TopLevelDomain] = true
+	}
+
+	if len(managedDomains) == 0 {
+		log.Fatal("ERROR: Cannot run cleanup mode without any configured domains. Set at least one of: INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, COMBINED_DOMAIN, or TOP_LEVEL_DOMAIN")
+	}
+
+	log.Printf("Cleanup will only affect these managed domains: %v", getMapKeys(managedDomains))
+
 	// Get all TXT records in the zone (potential heartbeats)
 	txtRecords := cf.getAllRecordsByType("TXT")
 	log.Printf("Found %d TXT records in zone", len(txtRecords))
@@ -923,6 +952,11 @@ func runCleanup(cf *CloudFlareClient, config *Config) {
 
 	// Check each TXT record to see if it's a heartbeat and if it's stale
 	for _, txtRecord := range txtRecords {
+		// SAFETY CHECK: Only consider domains we manage
+		if !managedDomains[txtRecord.Name] {
+			continue
+		}
+
 		content := strings.Trim(txtRecord.Content, "\"")
 
 		// Try to parse as a timestamp (heartbeat format)
