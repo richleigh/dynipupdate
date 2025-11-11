@@ -128,15 +128,6 @@ func main() {
 			}
 		}
 
-		// Create/update heartbeat for this domain
-		heartbeatName := heartbeatRecordName(config.InternalDomain)
-		heartbeatData := heartbeatContent()
-		totalCount++
-		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-			successCount++
-			log.Printf("Updated heartbeat for %s", config.InternalDomain)
-		}
-
 		// Delete stale records (IPs that exist in DNS but not in detected list)
 		for content, recordID := range existingIPs {
 			if !detectedIPs[content] {
@@ -148,7 +139,7 @@ func main() {
 			}
 		}
 	} else {
-		// No internal IPs found - delete all existing records and heartbeat
+		// No internal IPs found - delete all existing records
 		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
 		for _, record := range existingRecords {
 			totalCount++
@@ -156,14 +147,6 @@ func main() {
 			if cf.deleteRecord(record.ID, config.InternalDomain, "A") {
 				successCount++
 			}
-		}
-
-		// Delete the heartbeat
-		heartbeatName := heartbeatRecordName(config.InternalDomain)
-		totalCount++
-		if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-			successCount++
-			log.Printf("Deleted heartbeat for %s", config.InternalDomain)
 		}
 	}
 
@@ -278,17 +261,33 @@ func main() {
 			successCount++
 			log.Printf("Updated CNAME: %s -> %s", config.TopLevelDomain, config.CombinedDomain)
 		}
+	} else if config.TopLevelDomain != "" && config.CombinedDomain == "" {
+		log.Println("WARNING: TOP_LEVEL_DOMAIN is set but COMBINED_DOMAIN is not - skipping CNAME creation")
+	}
 
-		// Create/update heartbeat for top-level domain
-		heartbeatName := heartbeatRecordName(config.TopLevelDomain)
+	// Create/update single heartbeat for this host
+	// Use TOP_LEVEL_DOMAIN if set, otherwise COMBINED_DOMAIN, otherwise first available domain
+	heartbeatDomain := ""
+	if config.TopLevelDomain != "" {
+		heartbeatDomain = config.TopLevelDomain
+	} else if config.CombinedDomain != "" {
+		heartbeatDomain = config.CombinedDomain
+	} else if config.InternalDomain != "" {
+		heartbeatDomain = config.InternalDomain
+	} else if config.ExternalDomain != "" {
+		heartbeatDomain = config.ExternalDomain
+	} else if config.IPv6Domain != "" {
+		heartbeatDomain = config.IPv6Domain
+	}
+
+	if heartbeatDomain != "" {
+		heartbeatName := heartbeatRecordName(heartbeatDomain)
 		heartbeatData := heartbeatContent()
 		totalCount++
 		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
 			successCount++
-			log.Printf("Updated heartbeat for %s", config.TopLevelDomain)
+			log.Printf("Updated heartbeat for %s", heartbeatDomain)
 		}
-	} else if config.TopLevelDomain != "" && config.CombinedDomain == "" {
-		log.Println("WARNING: TOP_LEVEL_DOMAIN is set but COMBINED_DOMAIN is not - skipping CNAME creation")
 	}
 
 	// Report results
