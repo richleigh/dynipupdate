@@ -15,7 +15,8 @@ A lightweight Go-based dynamic DNS updater that automatically detects and update
 
 ## IP Detection Methods
 
-- **Internal IPv4**: Scans network interfaces for RFC1918 private IP addresses
+- **Internal IPv4**: Scans network interfaces for RFC1918 private IP addresses (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+- **Tailscale IPv4**: Scans network interfaces for Tailscale/VPN addresses (100.x.x.x)
 - **External IPv4**: Queries multiple services via IPv4 DNS (ipify, icanhazip, etc.)
 - **External IPv6**: Queries multiple services via IPv6 DNS
 
@@ -32,11 +33,13 @@ All configuration is done via environment variables. See `.env.example` for a co
 | `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `anubis.i.4.bees.wtf`) |
 | `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `anubis.e.4.bees.wtf`) |
 | `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `anubis.6.bees.wtf`) |
+| `TAILSCALE_DOMAIN` | Full domain for Tailscale/VPN IPs (e.g., `anubis.ts.bees.wtf`) - 100.x.x.x range |
 | `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `anubis.bees.wtf`) - **use this!** |
 | `TOP_LEVEL_DOMAIN` | **Optional** - CNAME alias pointing to COMBINED_DOMAIN (e.g., `anubis.example.com`) |
 
 **Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
 - From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- From Tailscale/VPN: resolves to Tailscale IPs (100.x.x.x)
 - From the internet: resolves to external IPv4 and IPv6
 - Your OS/browser automatically picks the best route
 
@@ -88,6 +91,26 @@ COMBINED_DOMAIN=anubis.bees.wtf
 
 # Results in DNS:
 anubis.bees.wtf A 192.168.1.10        # internal IP
+anubis.bees.wtf A 100.64.1.5          # Tailscale VPN IP
+anubis.bees.wtf A 203.0.113.45        # external IP
+anubis.bees.wtf AAAA 2001:db8::1      # external IPv6
+anubis.bees.wtf TXT "1699564820"      # heartbeat
+```
+
+**With Tailscale mesh network:**
+```bash
+# .env configuration
+TAILSCALE_DOMAIN=anubis.ts.bees.wtf
+COMBINED_DOMAIN=anubis.bees.wtf
+
+# Results in DNS:
+# Dedicated Tailscale domain for VPN mesh access
+anubis.ts.bees.wtf A 100.64.1.5       # Tailscale IP
+anubis.ts.bees.wtf TXT "1699564820"   # heartbeat
+
+# Combined domain includes everything
+anubis.bees.wtf A 192.168.1.10        # internal IP
+anubis.bees.wtf A 100.64.1.5          # Tailscale IP
 anubis.bees.wtf A 203.0.113.45        # external IP
 anubis.bees.wtf AAAA 2001:db8::1      # external IPv6
 anubis.bees.wtf TXT "1699564820"      # heartbeat
@@ -101,6 +124,7 @@ TOP_LEVEL_DOMAIN=anubis.example.com
 
 # Results in DNS:
 anubis.bees.wtf A 192.168.1.10
+anubis.bees.wtf A 100.64.1.5
 anubis.bees.wtf A 203.0.113.45
 anubis.bees.wtf AAAA 2001:db8::1
 anubis.bees.wtf TXT "1699564820"
@@ -119,10 +143,12 @@ ssh anubis.bees.wtf       # resolves directly
 INTERNAL_DOMAIN=anubis.i.4.bees.wtf
 EXTERNAL_DOMAIN=anubis.e.4.bees.wtf
 IPV6_DOMAIN=anubis.6.bees.wtf
+TAILSCALE_DOMAIN=anubis.ts.bees.wtf
 COMBINED_DOMAIN=anubis.bees.wtf
 TOP_LEVEL_DOMAIN=anubis.example.com
 
 # Results in separate purpose-specific domains plus combined
+# Each domain type gets its own DNS records and heartbeat
 ```
 
 ### Cleanup Mode
@@ -135,7 +161,7 @@ docker run --rm --env-file .env dynipupdate -cleanup
 
 The cleanup service:
 - Monitors heartbeat TXT records created by the updater
-- **ONLY cleans up domains explicitly configured in your .env file** (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, etc.)
+- **ONLY cleans up domains explicitly configured in your .env file** (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, TAILSCALE_DOMAIN, etc.)
 - Deletes DNS records when heartbeats are missing or stale
 - Runs continuously, checking at `CLEANUP_INTERVAL_SECONDS`
 
