@@ -144,9 +144,9 @@ PostgreSQL Container
 **Configuration:**
 ```bash
 # .env for a host with public web services
-COMBINED_DOMAIN=home.example.com
-CF_API_TOKEN=your-cloudflare-token
-CF_ZONE_ID=your-zone-id
+BEES_IP_UPDATE_COMBINED_DOMAIN=home.example.com
+BEES_IP_UPDATE_CF_API_TOKEN=your-cloudflare-token
+BEES_IP_UPDATE_CF_ZONE_ID=your-zone-id
 ```
 
 **Result:**

@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+// Environment variable prefix for all configuration
+const envPrefix = "BEES_IP_UPDATE_"
+
+// Track which environment variables have been consumed
+var consumedEnvVars = make(map[string]bool)
+
 // RFC1918 private IP ranges
 var rfc1918Ranges = []string{
 	"10.0.0.0/8",
@@ -156,6 +162,142 @@ func main() {
 			log.Printf("No internal IPv4 addresses found - deleting record: %s", record.Content)
 			if cf.deleteRecord(record.ID, config.InternalDomain, "A") {
 				successCount++
+			}
+		}
+	}
+
+	// Update custom IPv4 range records
+	for _, customRange := range config.CustomIPv4Ranges {
+		customIPs, exists := ips.CustomRangeIPs[customRange.Domain]
+
+		if exists && len(customIPs) > 0 {
+			// Get all existing records for this custom domain
+			existingRecords := cf.getAllRecords(customRange.Domain, "A")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range customIPs {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each detected IP
+			for _, ip := range customIPs {
+				totalCount++
+				if cf.ensureRecordExists(customRange.Domain, "A", ip, config.Proxied) {
+					successCount++
+				}
+			}
+
+			// Create/update heartbeat for this domain
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			heartbeatData := heartbeatContent()
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for %s", customRange.Domain)
+			}
+
+			// Delete stale records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale custom range IPv4 record: %s", content)
+					if cf.deleteRecord(recordID, customRange.Domain, "A") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPs found for this custom range - delete all existing records and heartbeat
+			existingRecords := cf.getAllRecords(customRange.Domain, "A")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPs found in custom range %s - deleting record: %s", customRange.CIDR, record.Content)
+				if cf.deleteRecord(record.ID, customRange.Domain, "A") {
+					successCount++
+				}
+			}
+
+			// Delete the heartbeat
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for %s", customRange.Domain)
+			}
+		}
+	}
+
+	// Update custom IPv6 range records
+	for _, customRange := range config.CustomIPv6Ranges {
+		customIPs, exists := ips.CustomRangeIPs[customRange.Domain]
+
+		if exists && len(customIPs) > 0 {
+			// Get all existing records for this custom domain
+			existingRecords := cf.getAllRecords(customRange.Domain, "AAAA")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range customIPs {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each detected IP
+			for _, ip := range customIPs {
+				totalCount++
+				if cf.ensureRecordExists(customRange.Domain, "AAAA", ip, config.Proxied) {
+					successCount++
+				}
+			}
+
+			// Create/update heartbeat for this domain
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			heartbeatData := heartbeatContent()
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for %s", customRange.Domain)
+			}
+
+			// Delete stale records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale custom range IPv6 record: %s", content)
+					if cf.deleteRecord(recordID, customRange.Domain, "AAAA") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPs found for this custom range - delete all existing records and heartbeat
+			existingRecords := cf.getAllRecords(customRange.Domain, "AAAA")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPs found in custom range %s - deleting record: %s", customRange.CIDR, record.Content)
+				if cf.deleteRecord(record.ID, customRange.Domain, "AAAA") {
+					successCount++
+				}
+			}
+
+			// Delete the heartbeat
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for %s", customRange.Domain)
 			}
 		}
 	}
@@ -481,14 +623,14 @@ func loadConfig(cleanupMode bool) *Config {
 	config := &Config{
 		CFAPIToken:       apiToken,
 		CFZoneID:         getEnvOrExit("CF_ZONE_ID"),
-		InternalDomain:   os.Getenv("INTERNAL_DOMAIN"),
-		ExternalDomain:   os.Getenv("EXTERNAL_DOMAIN"),
-		IPv6Domain:       os.Getenv("IPV6_DOMAIN"),
+		InternalDomain:   getEnv("INTERNAL_DOMAIN"),
+		ExternalDomain:   getEnv("EXTERNAL_DOMAIN"),
+		IPv6Domain:       getEnv("IPV6_DOMAIN"),
 		CustomIPv4Ranges: customIPv4Ranges,
 		CustomIPv6Ranges: customIPv6Ranges,
-		CombinedDomain:   os.Getenv("COMBINED_DOMAIN"),
-		TopLevelDomain:   os.Getenv("TOP_LEVEL_DOMAIN"),
-		Proxied:          strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
+		CombinedDomain:   getEnv("COMBINED_DOMAIN"),
+		TopLevelDomain:   getEnv("TOP_LEVEL_DOMAIN"),
+		Proxied:          strings.ToLower(getEnv("CF_PROXIED")) == "true",
 		StaleThreshold:   getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
 		CleanupInterval:  getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
 	}
@@ -498,7 +640,8 @@ func loadConfig(cleanupMode bool) *Config {
 	if config.InternalDomain == "" && config.ExternalDomain == "" &&
 		config.IPv6Domain == "" && !hasCustomRanges &&
 		config.CombinedDomain == "" && config.TopLevelDomain == "" {
-		log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, IPV4_RANGE_N/IPV6_RANGE_N, COMBINED_DOMAIN, or TOP_LEVEL_DOMAIN)")
+		log.Fatalf("At least one domain must be configured (%sINTERNAL_DOMAIN, %sEXTERNAL_DOMAIN, %sIPV6_DOMAIN, %sIPV4_RANGE_N/%sIPV6_RANGE_N, %sCOMBINED_DOMAIN, or %sTOP_LEVEL_DOMAIN)",
+			envPrefix, envPrefix, envPrefix, envPrefix, envPrefix, envPrefix, envPrefix)
 	}
 
 	// Log configured custom ranges
@@ -521,6 +664,9 @@ func loadConfig(cleanupMode bool) *Config {
 		log.Printf("  Cleanup Interval: %d seconds", config.CleanupInterval)
 		log.Printf("  Mode: Will only clean up configured managed domains")
 	}
+
+	// Validate that all BEES_IP_UPDATE_* env vars were consumed
+	validateUnusedEnvVars()
 
 	return config
 }
@@ -555,32 +701,138 @@ func heartbeatContent() string {
 	return fmt.Sprintf("\"%d\"", timestamp)
 }
 
+// getEnv gets an environment variable with the BEES_IP_UPDATE_ prefix and tracks consumption
+func getEnv(key string) string {
+	fullKey := envPrefix + key
+	value := os.Getenv(fullKey)
+	if value != "" {
+		consumedEnvVars[fullKey] = true
+	}
+	return value
+}
+
 func getEnvOrExit(key string) string {
-	value := os.Getenv(key)
+	value := getEnv(key)
 	if value == "" {
-		log.Fatalf("Required environment variable %s not set", key)
+		log.Fatalf("Required environment variable %s%s not set", envPrefix, key)
 	}
 	return value
 }
 
 func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
+	if value := getEnv(key); value != "" {
 		return value
 	}
 	return defaultValue
 }
 
 func getEnvOrDefaultInt(key string, defaultValue int) int {
-	value := os.Getenv(key)
+	value := getEnv(key)
 	if value == "" {
 		return defaultValue
 	}
 	intValue, err := strconv.Atoi(value)
 	if err != nil {
-		log.Printf("Invalid integer value for %s: %s, using default %d", key, value, defaultValue)
+		log.Printf("Invalid integer value for %s%s: %s, using default %d", envPrefix, key, value, defaultValue)
 		return defaultValue
 	}
 	return intValue
+}
+
+// validateUnusedEnvVars checks for any BEES_IP_UPDATE_* environment variables that were not consumed
+// and logs warnings to help users debug configuration issues
+func validateUnusedEnvVars() {
+	allEnvVars := os.Environ()
+	var unusedVars []string
+
+	for _, envVar := range allEnvVars {
+		// Split on first = to get key
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		key := parts[0]
+
+		// Check if this is one of our prefixed vars
+		if strings.HasPrefix(key, envPrefix) {
+			// Check if it was consumed
+			if !consumedEnvVars[key] {
+				unusedVars = append(unusedVars, key)
+			}
+		}
+	}
+
+	if len(unusedVars) > 0 {
+		log.Printf("WARNING: Found %d unused environment variable(s) with %s prefix:", len(unusedVars), envPrefix)
+		for _, key := range unusedVars {
+			// Remove prefix for cleaner display
+			shortKey := strings.TrimPrefix(key, envPrefix)
+			value := os.Getenv(key)
+
+			// Provide helpful explanations for common issues
+			explanation := getUnusedVarExplanation(shortKey, value)
+			if explanation != "" {
+				log.Printf("  - %s (value: %q) - %s", key, value, explanation)
+			} else {
+				log.Printf("  - %s (value: %q) - Unknown configuration variable", key, value)
+			}
+		}
+		log.Printf("These variables had no effect. Check for typos or see documentation for valid variable names.")
+	}
+}
+
+// getUnusedVarExplanation provides helpful explanations for why a variable wasn't used
+func getUnusedVarExplanation(key, value string) string {
+	// Check for common typos or misconfigurations
+	switch {
+	case strings.HasPrefix(key, "IPV4_RANGE_") && strings.HasSuffix(key, "_DOMAIN"):
+		// Extract the number
+		rangeNum := strings.TrimPrefix(key, "IPV4_RANGE_")
+		rangeNum = strings.TrimSuffix(rangeNum, "_DOMAIN")
+		cidrKey := fmt.Sprintf("IPV4_RANGE_%s", rangeNum)
+		if getEnv(cidrKey) == "" {
+			return fmt.Sprintf("Missing companion variable %s%s (both CIDR and DOMAIN must be set)", envPrefix, cidrKey)
+		}
+		return "Paired CIDR variable exists but may have validation issues"
+
+	case strings.HasPrefix(key, "IPV4_RANGE_"):
+		// Extract the number
+		rangeNum := strings.TrimPrefix(key, "IPV4_RANGE_")
+		domainKey := fmt.Sprintf("IPV4_RANGE_%s_DOMAIN", rangeNum)
+		if getEnv(domainKey) == "" {
+			return fmt.Sprintf("Missing companion variable %s%s (both CIDR and DOMAIN must be set)", envPrefix, domainKey)
+		}
+		// Check if CIDR is valid
+		_, _, err := net.ParseCIDR(value)
+		if err != nil {
+			return fmt.Sprintf("Invalid CIDR notation: %v", err)
+		}
+		return "Paired DOMAIN variable exists but may have validation issues"
+
+	case strings.HasPrefix(key, "IPV6_RANGE_") && strings.HasSuffix(key, "_DOMAIN"):
+		rangeNum := strings.TrimPrefix(key, "IPV6_RANGE_")
+		rangeNum = strings.TrimSuffix(rangeNum, "_DOMAIN")
+		cidrKey := fmt.Sprintf("IPV6_RANGE_%s", rangeNum)
+		if getEnv(cidrKey) == "" {
+			return fmt.Sprintf("Missing companion variable %s%s (both CIDR and DOMAIN must be set)", envPrefix, cidrKey)
+		}
+		return "Paired CIDR variable exists but may have validation issues"
+
+	case strings.HasPrefix(key, "IPV6_RANGE_"):
+		rangeNum := strings.TrimPrefix(key, "IPV6_RANGE_")
+		domainKey := fmt.Sprintf("IPV6_RANGE_%s_DOMAIN", rangeNum)
+		if getEnv(domainKey) == "" {
+			return fmt.Sprintf("Missing companion variable %s%s (both CIDR and DOMAIN must be set)", envPrefix, domainKey)
+		}
+		// Check if CIDR is valid
+		_, _, err := net.ParseCIDR(value)
+		if err != nil {
+			return fmt.Sprintf("Invalid CIDR notation: %v", err)
+		}
+		return "Paired DOMAIN variable exists but may have validation issues"
+	}
+
+	return ""
 }
 
 // parseCustomRanges parses custom IP range configuration from environment variables
@@ -593,8 +845,8 @@ func parseCustomRanges(prefix string, recordType string, maxRanges int) []Custom
 		cidrKey := fmt.Sprintf("%s_%d", prefix, i)
 		domainKey := fmt.Sprintf("%s_%d_DOMAIN", prefix, i)
 
-		cidr := os.Getenv(cidrKey)
-		domain := os.Getenv(domainKey)
+		cidr := getEnv(cidrKey)
+		domain := getEnv(domainKey)
 
 		// Both must be set for a valid range
 		if cidr == "" && domain == "" {
@@ -602,19 +854,19 @@ func parseCustomRanges(prefix string, recordType string, maxRanges int) []Custom
 		}
 
 		if cidr == "" {
-			log.Printf("WARNING: %s is set but %s is not - skipping", domainKey, cidrKey)
+			log.Printf("WARNING: %s%s is set but %s%s is not - skipping", envPrefix, domainKey, envPrefix, cidrKey)
 			continue
 		}
 
 		if domain == "" {
-			log.Printf("WARNING: %s is set but %s is not - skipping", cidrKey, domainKey)
+			log.Printf("WARNING: %s%s is set but %s%s is not - skipping", envPrefix, cidrKey, envPrefix, domainKey)
 			continue
 		}
 
 		// Validate CIDR notation
 		_, _, err := net.ParseCIDR(cidr)
 		if err != nil {
-			log.Printf("WARNING: Invalid CIDR notation in %s: %s (%v) - skipping", cidrKey, cidr, err)
+			log.Printf("WARNING: Invalid CIDR notation in %s%s: %s (%v) - skipping", envPrefix, cidrKey, cidr, err)
 			continue
 		}
 

@@ -45,13 +45,13 @@ sudo nano /etc/dynipupdate/config.env
 Set your values:
 ```bash
 # Get these from CloudFlare dashboard
-CF_API_TOKEN=your-token-here
-CF_ZONE_ID=your-zone-id-here
+BEES_IP_UPDATE_CF_API_TOKEN=your-token-here
+BEES_IP_UPDATE_CF_ZONE_ID=your-zone-id-here
 
 # Set exact domain names you want created
-INTERNAL_DOMAIN=oracle-vm.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm.example.com
-IPV6_DOMAIN=oracle-vm.ipv6.example.com
+BEES_IP_UPDATE_INTERNAL_DOMAIN=oracle-vm.internal.example.com
+BEES_IP_UPDATE_EXTERNAL_DOMAIN=oracle-vm.example.com
+BEES_IP_UPDATE_IPV6_DOMAIN=oracle-vm.ipv6.example.com
 
 # Identifier for this VM
 INSTANCE_ID=oracle-free-tier-vm1
@@ -134,15 +134,15 @@ If you have multiple Oracle VMs, configure each with unique domains:
 
 **VM 1:**
 ```bash
-INTERNAL_DOMAIN=oracle-vm1.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm1.example.com
+BEES_IP_UPDATE_INTERNAL_DOMAIN=oracle-vm1.internal.example.com
+BEES_IP_UPDATE_EXTERNAL_DOMAIN=oracle-vm1.example.com
 INSTANCE_ID=oracle-vm1
 ```
 
 **VM 2:**
 ```bash
-INTERNAL_DOMAIN=oracle-vm2.internal.example.com
-EXTERNAL_DOMAIN=oracle-vm2.example.com
+BEES_IP_UPDATE_INTERNAL_DOMAIN=oracle-vm2.internal.example.com
+BEES_IP_UPDATE_EXTERNAL_DOMAIN=oracle-vm2.example.com
 INSTANCE_ID=oracle-vm2
 ```
 
@@ -162,8 +162,8 @@ journalctl -u dynipupdate --since "1 hour ago"
 ### Test CloudFlare API:
 ```bash
 source /etc/dynipupdate/config.env
-curl -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+curl -X GET "https://api.cloudflare.com/client/v4/zones/${BEES_IP_UPDATE_CF_ZONE_ID}/dns_records" \
+  -H "Authorization: Bearer ${BEES_IP_UPDATE_CF_API_TOKEN}" \
   -H "Content-Type: application/json"
 ```
 
