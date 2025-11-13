@@ -15,7 +15,11 @@ A lightweight Go-based dynamic DNS updater that automatically detects and update
 
 ## IP Detection Methods
 
-- **Internal IPv4**: Scans network interfaces for RFC1918 private IP addresses
+- **Internal IPv4**: Scans network interfaces for RFC1918 private IP addresses (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+- **Custom IP Ranges**: Scans network interfaces for user-defined CIDR ranges (IPv4 and IPv6)
+  - Perfect for VPNs: Tailscale, WireGuard, OpenVPN, ZeroTier, etc.
+  - Cloud VPC ranges, custom private networks
+  - Supports up to 20 IPv4 and 20 IPv6 custom ranges
 - **External IPv4**: Queries multiple services via IPv4 DNS (ipify, icanhazip, etc.)
 - **External IPv6**: Queries multiple services via IPv6 DNS
 
@@ -32,13 +36,31 @@ All configuration is done via environment variables. See `.env.example` for a co
 | `INTERNAL_DOMAIN` | Full domain for internal IPv4 records (e.g., `anubis.i.4.bees.wtf`) |
 | `EXTERNAL_DOMAIN` | Full domain for external IPv4 record (e.g., `anubis.e.4.bees.wtf`) |
 | `IPV6_DOMAIN` | Full domain for external IPv6 record (e.g., `anubis.6.bees.wtf`) |
+| `IPV4_RANGE_N` + `IPV4_RANGE_N_DOMAIN` | Custom IPv4 ranges (N=1-20, e.g., `100.64.0.0/10` → `anubis.ts.bees.wtf`) |
+| `IPV6_RANGE_N` + `IPV6_RANGE_N_DOMAIN` | Custom IPv6 ranges (N=1-20, e.g., `fd00::/8` → `anubis.vpn6.bees.wtf`) |
 | `COMBINED_DOMAIN` | **Main domain** - aggregates ALL IPs (e.g., `anubis.bees.wtf`) - **use this!** |
 | `TOP_LEVEL_DOMAIN` | **Optional** - CNAME alias pointing to COMBINED_DOMAIN (e.g., `anubis.example.com`) |
 
 **Why COMBINED_DOMAIN?** This is the killer feature - one domain that resolves to all your IPs:
 - From your LAN: resolves to internal IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
+- From custom VPNs: resolves to your configured range IPs (Tailscale, WireGuard, etc.)
 - From the internet: resolves to external IPv4 and IPv6
 - Your OS/browser automatically picks the best route
+
+**Custom IP Ranges Examples:**
+```bash
+# Tailscale
+IPV4_RANGE_1=100.64.0.0/10
+IPV4_RANGE_1_DOMAIN=anubis.ts.bees.wtf
+
+# WireGuard
+IPV4_RANGE_2=10.20.0.0/16
+IPV4_RANGE_2_DOMAIN=anubis.wg.bees.wtf
+
+# IPv6 VPN
+IPV6_RANGE_1=fd00::/8
+IPV6_RANGE_1_DOMAIN=anubis.vpn6.bees.wtf
+```
 
 **Why TOP_LEVEL_DOMAIN?** Optional friendly alias via CNAME:
 - Points to COMBINED_DOMAIN (e.g., `anubis.example.com` -> `anubis.bees.wtf`)
@@ -92,6 +114,44 @@ anubis.bees.wtf AAAA 2001:db8::1      # external IPv6
 anubis.bees.wtf TXT "1699564820"      # heartbeat
 ```
 
+**With custom VPN ranges (Tailscale example):**
+```bash
+# .env configuration
+IPV4_RANGE_1=100.64.0.0/10            # Tailscale CGNAT range
+IPV4_RANGE_1_DOMAIN=anubis.ts.bees.wtf
+COMBINED_DOMAIN=anubis.bees.wtf
+
+# Results in DNS:
+# Dedicated VPN domain
+anubis.ts.bees.wtf A 100.64.1.5       # Tailscale IP
+anubis.ts.bees.wtf TXT "1699564820"   # heartbeat
+
+# Combined domain includes everything
+anubis.bees.wtf A 192.168.1.10        # internal IP
+anubis.bees.wtf A 100.64.1.5          # Tailscale IP
+anubis.bees.wtf A 203.0.113.45        # external IP
+anubis.bees.wtf AAAA 2001:db8::1      # external IPv6
+anubis.bees.wtf TXT "1699564820"      # heartbeat
+```
+
+**Multiple VPN networks:**
+```bash
+# .env configuration
+IPV4_RANGE_1=100.64.0.0/10            # Tailscale
+IPV4_RANGE_1_DOMAIN=anubis.ts.bees.wtf
+IPV4_RANGE_2=10.20.0.0/16             # WireGuard
+IPV4_RANGE_2_DOMAIN=anubis.wg.bees.wtf
+COMBINED_DOMAIN=anubis.bees.wtf
+
+# Results in separate VPN domains, all aggregated in combined:
+anubis.ts.bees.wtf A 100.64.1.5       # Tailscale
+anubis.wg.bees.wtf A 10.20.0.100      # WireGuard
+anubis.bees.wtf A 192.168.1.10        # internal
+anubis.bees.wtf A 100.64.1.5          # Tailscale
+anubis.bees.wtf A 10.20.0.100         # WireGuard
+anubis.bees.wtf A 203.0.113.45        # external
+```
+
 **With friendly CNAME alias:**
 ```bash
 # .env configuration
@@ -111,16 +171,21 @@ ssh anubis.example.com    # resolves via CNAME
 ssh anubis.bees.wtf       # resolves directly
 ```
 
-**Full setup (all domains):**
+**Full setup (all features):**
 ```bash
 # .env configuration
 INTERNAL_DOMAIN=anubis.i.4.bees.wtf
 EXTERNAL_DOMAIN=anubis.e.4.bees.wtf
 IPV6_DOMAIN=anubis.6.bees.wtf
+IPV4_RANGE_1=100.64.0.0/10
+IPV4_RANGE_1_DOMAIN=anubis.ts.bees.wtf
+IPV6_RANGE_1=fd00::/8
+IPV6_RANGE_1_DOMAIN=anubis.vpn6.bees.wtf
 COMBINED_DOMAIN=anubis.bees.wtf
 TOP_LEVEL_DOMAIN=anubis.example.com
 
 # Results in separate purpose-specific domains plus combined
+# Each domain type gets its own DNS records and heartbeat
 ```
 
 ### Cleanup Mode
@@ -133,7 +198,7 @@ docker run --rm --env-file .env dynipupdate -cleanup
 
 The cleanup service:
 - Monitors heartbeat TXT records created by the updater
-- **ONLY cleans up domains explicitly configured in your .env file** (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, etc.)
+- **ONLY cleans up domains explicitly configured in your .env file** (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, custom ranges, etc.)
 - Deletes DNS records when heartbeats are missing or stale
 - Runs continuously, checking at `CLEANUP_INTERVAL_SECONDS`
 
