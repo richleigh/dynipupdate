@@ -65,15 +65,14 @@ BEES_IP_UPDATE_IPV6_RANGE_1_DOMAIN=anubis.vpn6.bees.wtf
 **Why TOP_LEVEL_DOMAIN?** Optional friendly alias via CNAME:
 - Points to COMBINED_DOMAIN (e.g., `anubis.example.com` -> `anubis.bees.wtf`)
 - Users can use the friendly name, DNS resolves through CNAME to get all IPs
-- Also gets a heartbeat TXT record for automatic cleanup
+- Gets the heartbeat TXT record (preferred location for heartbeat)
 - Example:
   ```
   # Combined domain with actual IPs
   anubis.bees.wtf A 192.168.1.10
   anubis.bees.wtf AAAA 2001:db8::1
-  anubis.bees.wtf TXT "1699564820"
 
-  # Top-level CNAME alias
+  # Top-level CNAME alias with heartbeat
   anubis.example.com CNAME anubis.bees.wtf
   anubis.example.com TXT "1699564820"
   ```
@@ -163,10 +162,9 @@ BEES_IP_UPDATE_TOP_LEVEL_DOMAIN=anubis.example.com
 anubis.bees.wtf A 192.168.1.10
 anubis.bees.wtf A 203.0.113.45
 anubis.bees.wtf AAAA 2001:db8::1
-anubis.bees.wtf TXT "1699564820"
 
 anubis.example.com CNAME anubis.bees.wtf  # friendly alias
-anubis.example.com TXT "1699564820"       # also gets heartbeat
+anubis.example.com TXT "1699564820"       # heartbeat (at top-level)
 
 # Users can now use either name:
 ssh anubis.example.com    # resolves via CNAME
@@ -234,15 +232,23 @@ services:
 
 ## How Heartbeat Cleanup Works
 
-When the updater runs, it creates/updates a heartbeat TXT record **at the same domain name** as the A/AAAA records:
+Each host creates/updates **ONE heartbeat TXT record** to indicate it's still alive. The heartbeat is created at:
+1. **TOP_LEVEL_DOMAIN** (if set) - preferred location
+2. **COMBINED_DOMAIN** (if TOP_LEVEL_DOMAIN not set) - fallback
+3. **First configured domain** (INTERNAL/EXTERNAL/IPV6) - last resort
 
+Example:
 ```
-# Multiple A records for the IPs
-anubis.i.4.bees.wtf A 192.168.1.10
-anubis.i.4.bees.wtf A 192.168.1.11
+# DNS records for a host
+anubis.bees.wtf A 192.168.1.10
+anubis.bees.wtf A 192.168.1.11
+anubis.bees.wtf AAAA 2001:db8::1
 
-# ONE heartbeat TXT record (same name, different type)
-anubis.i.4.bees.wtf TXT "1699564820"
+# Top-level CNAME alias
+anubis.example.com CNAME anubis.bees.wtf
+
+# ONE heartbeat TXT record (at top-level domain)
+anubis.example.com TXT "1699564820"
 ```
 
 The heartbeat TXT record contains:
@@ -251,17 +257,16 @@ The heartbeat TXT record contains:
 
 **How it works:**
 1. Each time the updater runs, it updates the TXT record with the current timestamp
-2. The cleanup service scans **all TXT records in the zone** to discover heartbeats
+2. The cleanup service scans **only your configured managed domains** for heartbeat TXT records
 3. For each heartbeat, it checks if the timestamp is stale (default: older than 1 hour)
 4. If stale, cleanup deletes ALL records for that domain (A/AAAA/CNAME/TXT)
 5. This automatically weeds out dead processes/containers hanging around for no good reason
 
 **Key features:**
-- **Automatic discovery**: Cleanup doesn't need to know domain names in advance
-- **Zone-wide scanning**: Finds all domains with heartbeats across your entire zone
+- **One heartbeat per host**: Simpler and more efficient than per-domain heartbeats
+- **Managed domains only**: Cleanup only affects domains you explicitly configure
 - **Keeps DNS clean**: Any host that stops updating its heartbeat gets cleaned up
-- **Un-sanctioned removal**: Domains without valid heartbeats are automatically removed
-- **CNAME cleanup**: Top-level CNAME aliases are also removed when stale
+- **Safe operation**: Will never touch other domains in the zone
 
 ## Building
 

@@ -144,15 +144,6 @@ func main() {
 			}
 		}
 
-		// Create/update heartbeat for this domain
-		heartbeatName := heartbeatRecordName(config.InternalDomain)
-		heartbeatData := heartbeatContent()
-		totalCount++
-		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-			successCount++
-			log.Printf("Updated heartbeat for %s", config.InternalDomain)
-		}
-
 		// Delete stale records (IPs that exist in DNS but not in detected list)
 		for content, recordID := range existingIPs {
 			if !detectedIPs[content] {
@@ -164,7 +155,7 @@ func main() {
 			}
 		}
 	} else {
-		// No internal IPs found - delete all existing records and heartbeat
+		// No internal IPs found - delete all existing records
 		existingRecords := cf.getAllRecords(config.InternalDomain, "A")
 		for _, record := range existingRecords {
 			totalCount++
@@ -173,13 +164,141 @@ func main() {
 				successCount++
 			}
 		}
+	}
 
-		// Delete the heartbeat
-		heartbeatName := heartbeatRecordName(config.InternalDomain)
-		totalCount++
-		if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-			successCount++
-			log.Printf("Deleted heartbeat for %s", config.InternalDomain)
+	// Update custom IPv4 range records
+	for _, customRange := range config.CustomIPv4Ranges {
+		customIPs, exists := ips.CustomRangeIPs[customRange.Domain]
+
+		if exists && len(customIPs) > 0 {
+			// Get all existing records for this custom domain
+			existingRecords := cf.getAllRecords(customRange.Domain, "A")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range customIPs {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each detected IP
+			for _, ip := range customIPs {
+				totalCount++
+				if cf.ensureRecordExists(customRange.Domain, "A", ip, config.Proxied) {
+					successCount++
+				}
+			}
+
+			// Create/update heartbeat for this domain
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			heartbeatData := heartbeatContent()
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for %s", customRange.Domain)
+			}
+
+			// Delete stale records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale custom range IPv4 record: %s", content)
+					if cf.deleteRecord(recordID, customRange.Domain, "A") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPs found for this custom range - delete all existing records and heartbeat
+			existingRecords := cf.getAllRecords(customRange.Domain, "A")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPs found in custom range %s - deleting record: %s", customRange.CIDR, record.Content)
+				if cf.deleteRecord(record.ID, customRange.Domain, "A") {
+					successCount++
+				}
+			}
+
+			// Delete the heartbeat
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for %s", customRange.Domain)
+			}
+		}
+	}
+
+	// Update custom IPv6 range records
+	for _, customRange := range config.CustomIPv6Ranges {
+		customIPs, exists := ips.CustomRangeIPs[customRange.Domain]
+
+		if exists && len(customIPs) > 0 {
+			// Get all existing records for this custom domain
+			existingRecords := cf.getAllRecords(customRange.Domain, "AAAA")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range customIPs {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each detected IP
+			for _, ip := range customIPs {
+				totalCount++
+				if cf.ensureRecordExists(customRange.Domain, "AAAA", ip, config.Proxied) {
+					successCount++
+				}
+			}
+
+			// Create/update heartbeat for this domain
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			heartbeatData := heartbeatContent()
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for %s", customRange.Domain)
+			}
+
+			// Delete stale records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale custom range IPv6 record: %s", content)
+					if cf.deleteRecord(recordID, customRange.Domain, "AAAA") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPs found for this custom range - delete all existing records and heartbeat
+			existingRecords := cf.getAllRecords(customRange.Domain, "AAAA")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPs found in custom range %s - deleting record: %s", customRange.CIDR, record.Content)
+				if cf.deleteRecord(record.ID, customRange.Domain, "AAAA") {
+					successCount++
+				}
+			}
+
+			// Delete the heartbeat
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for %s", customRange.Domain)
+			}
 		}
 	}
 
@@ -438,17 +557,33 @@ func main() {
 			successCount++
 			log.Printf("Updated CNAME: %s -> %s", config.TopLevelDomain, config.CombinedDomain)
 		}
+	} else if config.TopLevelDomain != "" && config.CombinedDomain == "" {
+		log.Println("WARNING: TOP_LEVEL_DOMAIN is set but COMBINED_DOMAIN is not - skipping CNAME creation")
+	}
 
-		// Create/update heartbeat for top-level domain
-		heartbeatName := heartbeatRecordName(config.TopLevelDomain)
+	// Create/update single heartbeat for this host
+	// Use TOP_LEVEL_DOMAIN if set, otherwise COMBINED_DOMAIN, otherwise first available domain
+	heartbeatDomain := ""
+	if config.TopLevelDomain != "" {
+		heartbeatDomain = config.TopLevelDomain
+	} else if config.CombinedDomain != "" {
+		heartbeatDomain = config.CombinedDomain
+	} else if config.InternalDomain != "" {
+		heartbeatDomain = config.InternalDomain
+	} else if config.ExternalDomain != "" {
+		heartbeatDomain = config.ExternalDomain
+	} else if config.IPv6Domain != "" {
+		heartbeatDomain = config.IPv6Domain
+	}
+
+	if heartbeatDomain != "" {
+		heartbeatName := heartbeatRecordName(heartbeatDomain)
 		heartbeatData := heartbeatContent()
 		totalCount++
 		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
 			successCount++
-			log.Printf("Updated heartbeat for %s", config.TopLevelDomain)
+			log.Printf("Updated heartbeat for %s", heartbeatDomain)
 		}
-	} else if config.TopLevelDomain != "" && config.CombinedDomain == "" {
-		log.Println("WARNING: TOP_LEVEL_DOMAIN is set but COMBINED_DOMAIN is not - skipping CNAME creation")
 	}
 
 	// Report results
