@@ -22,9 +22,11 @@ var rfc1918Ranges = []string{
 	"192.168.0.0/16",
 }
 
-// Tailscale IP range (CGNAT range 100.64.0.0/10, but we support the full 100.0.0.0/8 for flexibility)
-var tailscaleRanges = []string{
-	"100.0.0.0/8",
+// CustomIPRange represents a user-defined IP range to detect and publish
+type CustomIPRange struct {
+	CIDR   string // CIDR notation, e.g., "100.0.0.0/8"
+	Domain string // DNS domain for this range, e.g., "host.vpn.example.com"
+	Type   string // "A" for IPv4, "AAAA" for IPv6
 }
 
 // CloudFlare API structures
@@ -62,25 +64,26 @@ type CFCreateUpdateRequest struct {
 
 // Config holds application configuration
 type Config struct {
-	CFAPIToken      string
-	CFZoneID        string
-	InternalDomain  string
-	ExternalDomain  string
-	IPv6Domain      string
-	TailscaleDomain string // Tailscale/VPN IPs (100.x.x.x)
-	CombinedDomain  string
-	TopLevelDomain  string // CNAME alias pointing to CombinedDomain
-	Proxied         bool
-	StaleThreshold  int // seconds (for cleanup mode)
-	CleanupInterval int // seconds (for cleanup mode)
+	CFAPIToken       string
+	CFZoneID         string
+	InternalDomain   string
+	ExternalDomain   string
+	IPv6Domain       string
+	CustomIPv4Ranges []CustomIPRange // User-defined IPv4 ranges
+	CustomIPv6Ranges []CustomIPRange // User-defined IPv6 ranges
+	CombinedDomain   string
+	TopLevelDomain   string // CNAME alias pointing to CombinedDomain
+	Proxied          bool
+	StaleThreshold   int // seconds (for cleanup mode)
+	CleanupInterval  int // seconds (for cleanup mode)
 }
 
 // IPAddresses holds detected IP addresses
 type IPAddresses struct {
-	InternalIPv4 []string
-	TailscaleIPv4 []string
-	ExternalIPv4 string
-	ExternalIPv6 string
+	InternalIPv4   []string
+	ExternalIPv4   string
+	ExternalIPv6   string
+	CustomRangeIPs map[string][]string // domain -> detected IPs for that custom range
 }
 
 func main() {
@@ -105,7 +108,7 @@ func main() {
 
 	// Update mode
 	log.Println("Starting Dynamic DNS Updater")
-	ips := detectIPs()
+	ips := detectIPs(config)
 
 	successCount := 0
 	totalCount := 0
@@ -174,67 +177,139 @@ func main() {
 		}
 	}
 
-	// Update Tailscale IPv4 records (support multiple addresses)
-	if len(ips.TailscaleIPv4) > 0 {
-		// Get all existing records for the Tailscale domain
-		existingRecords := cf.getAllRecords(config.TailscaleDomain, "A")
+	// Update custom IPv4 range records
+	for _, customRange := range config.CustomIPv4Ranges {
+		customIPs, exists := ips.CustomRangeIPs[customRange.Domain]
 
-		// Create a map of existing record contents for quick lookup
-		existingIPs := make(map[string]string) // content -> recordID
-		for _, record := range existingRecords {
-			existingIPs[record.Content] = record.ID
-		}
+		if exists && len(customIPs) > 0 {
+			// Get all existing records for this custom domain
+			existingRecords := cf.getAllRecords(customRange.Domain, "A")
 
-		// Create a map of detected IPs
-		detectedIPs := make(map[string]bool)
-		for _, ip := range ips.TailscaleIPv4 {
-			detectedIPs[ip] = true
-		}
-
-		// Create/update records for each detected IP
-		for _, ip := range ips.TailscaleIPv4 {
-			totalCount++
-			if cf.ensureRecordExists(config.TailscaleDomain, "A", ip, config.Proxied) {
-				successCount++
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
 			}
-		}
 
-		// Create/update heartbeat for this domain
-		heartbeatName := heartbeatRecordName(config.TailscaleDomain)
-		heartbeatData := heartbeatContent()
-		totalCount++
-		if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
-			successCount++
-			log.Printf("Updated heartbeat for %s", config.TailscaleDomain)
-		}
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range customIPs {
+				detectedIPs[ip] = true
+			}
 
-		// Delete stale records (IPs that exist in DNS but not in detected list)
-		for content, recordID := range existingIPs {
-			if !detectedIPs[content] {
+			// Create/update records for each detected IP
+			for _, ip := range customIPs {
 				totalCount++
-				log.Printf("Deleting stale Tailscale IPv4 record: %s", content)
-				if cf.deleteRecord(recordID, config.TailscaleDomain, "A") {
+				if cf.ensureRecordExists(customRange.Domain, "A", ip, config.Proxied) {
 					successCount++
 				}
 			}
-		}
-	} else {
-		// No Tailscale IPs found - delete all existing records and heartbeat
-		existingRecords := cf.getAllRecords(config.TailscaleDomain, "A")
-		for _, record := range existingRecords {
+
+			// Create/update heartbeat for this domain
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			heartbeatData := heartbeatContent()
 			totalCount++
-			log.Printf("No Tailscale IPv4 addresses found - deleting record: %s", record.Content)
-			if cf.deleteRecord(record.ID, config.TailscaleDomain, "A") {
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
 				successCount++
+				log.Printf("Updated heartbeat for %s", customRange.Domain)
+			}
+
+			// Delete stale records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale custom range IPv4 record: %s", content)
+					if cf.deleteRecord(recordID, customRange.Domain, "A") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPs found for this custom range - delete all existing records and heartbeat
+			existingRecords := cf.getAllRecords(customRange.Domain, "A")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPs found in custom range %s - deleting record: %s", customRange.CIDR, record.Content)
+				if cf.deleteRecord(record.ID, customRange.Domain, "A") {
+					successCount++
+				}
+			}
+
+			// Delete the heartbeat
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for %s", customRange.Domain)
 			}
 		}
+	}
 
-		// Delete the heartbeat
-		heartbeatName := heartbeatRecordName(config.TailscaleDomain)
-		totalCount++
-		if cf.deleteRecordIfExists(heartbeatName, "TXT") {
-			successCount++
-			log.Printf("Deleted heartbeat for %s", config.TailscaleDomain)
+	// Update custom IPv6 range records
+	for _, customRange := range config.CustomIPv6Ranges {
+		customIPs, exists := ips.CustomRangeIPs[customRange.Domain]
+
+		if exists && len(customIPs) > 0 {
+			// Get all existing records for this custom domain
+			existingRecords := cf.getAllRecords(customRange.Domain, "AAAA")
+
+			// Create a map of existing record contents for quick lookup
+			existingIPs := make(map[string]string) // content -> recordID
+			for _, record := range existingRecords {
+				existingIPs[record.Content] = record.ID
+			}
+
+			// Create a map of detected IPs
+			detectedIPs := make(map[string]bool)
+			for _, ip := range customIPs {
+				detectedIPs[ip] = true
+			}
+
+			// Create/update records for each detected IP
+			for _, ip := range customIPs {
+				totalCount++
+				if cf.ensureRecordExists(customRange.Domain, "AAAA", ip, config.Proxied) {
+					successCount++
+				}
+			}
+
+			// Create/update heartbeat for this domain
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			heartbeatData := heartbeatContent()
+			totalCount++
+			if cf.upsertRecord(heartbeatName, "TXT", heartbeatData, false) {
+				successCount++
+				log.Printf("Updated heartbeat for %s", customRange.Domain)
+			}
+
+			// Delete stale records (IPs that exist in DNS but not in detected list)
+			for content, recordID := range existingIPs {
+				if !detectedIPs[content] {
+					totalCount++
+					log.Printf("Deleting stale custom range IPv6 record: %s", content)
+					if cf.deleteRecord(recordID, customRange.Domain, "AAAA") {
+						successCount++
+					}
+				}
+			}
+		} else {
+			// No IPs found for this custom range - delete all existing records and heartbeat
+			existingRecords := cf.getAllRecords(customRange.Domain, "AAAA")
+			for _, record := range existingRecords {
+				totalCount++
+				log.Printf("No IPs found in custom range %s - deleting record: %s", customRange.CIDR, record.Content)
+				if cf.deleteRecord(record.ID, customRange.Domain, "AAAA") {
+					successCount++
+				}
+			}
+
+			// Delete the heartbeat
+			heartbeatName := heartbeatRecordName(customRange.Domain)
+			totalCount++
+			if cf.deleteRecordIfExists(heartbeatName, "TXT") {
+				successCount++
+				log.Printf("Deleted heartbeat for %s", customRange.Domain)
+			}
 		}
 	}
 
@@ -270,10 +345,17 @@ func main() {
 	if config.CombinedDomain != "" {
 		log.Printf("Updating combined domain: %s", config.CombinedDomain)
 
-		// Collect all IPv4 addresses (internal + tailscale + external)
+		// Collect all IPv4 addresses (internal + custom ranges + external)
 		var allIPv4s []string
 		allIPv4s = append(allIPv4s, ips.InternalIPv4...)
-		allIPv4s = append(allIPv4s, ips.TailscaleIPv4...)
+
+		// Add all custom IPv4 range IPs
+		for _, customRange := range config.CustomIPv4Ranges {
+			if customIPs, exists := ips.CustomRangeIPs[customRange.Domain]; exists {
+				allIPv4s = append(allIPv4s, customIPs...)
+			}
+		}
+
 		if ips.ExternalIPv4 != "" {
 			allIPv4s = append(allIPv4s, ips.ExternalIPv4)
 		}
@@ -384,6 +466,10 @@ func loadConfig(cleanupMode bool) *Config {
 	// Trim any whitespace that might have been included
 	apiToken = strings.TrimSpace(apiToken)
 
+	// Parse custom IP ranges (supports up to 20 ranges for each type)
+	customIPv4Ranges := parseCustomRanges("IPV4_RANGE", "A", 20)
+	customIPv6Ranges := parseCustomRanges("IPV6_RANGE", "AAAA", 20)
+
 	// Debug: Check for common issues
 	if strings.HasPrefix(apiToken, "\"") || strings.HasPrefix(apiToken, "'") {
 		log.Printf("WARNING: API token appears to have quotes around it (len=%d, first char=%q, last char=%q)",
@@ -394,24 +480,40 @@ func loadConfig(cleanupMode bool) *Config {
 		len(apiToken), apiToken, apiToken[max(0, len(apiToken)-4):])
 
 	config := &Config{
-		CFAPIToken:      apiToken,
-		CFZoneID:        getEnvOrExit("CF_ZONE_ID"),
-		InternalDomain:  os.Getenv("INTERNAL_DOMAIN"),
-		ExternalDomain:  os.Getenv("EXTERNAL_DOMAIN"),
-		IPv6Domain:      os.Getenv("IPV6_DOMAIN"),
-		TailscaleDomain: os.Getenv("TAILSCALE_DOMAIN"),
-		CombinedDomain:  os.Getenv("COMBINED_DOMAIN"),
-		TopLevelDomain:  os.Getenv("TOP_LEVEL_DOMAIN"),
-		Proxied:         strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
-		StaleThreshold:  getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
-		CleanupInterval: getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
+		CFAPIToken:       apiToken,
+		CFZoneID:         getEnvOrExit("CF_ZONE_ID"),
+		InternalDomain:   os.Getenv("INTERNAL_DOMAIN"),
+		ExternalDomain:   os.Getenv("EXTERNAL_DOMAIN"),
+		IPv6Domain:       os.Getenv("IPV6_DOMAIN"),
+		CustomIPv4Ranges: customIPv4Ranges,
+		CustomIPv6Ranges: customIPv6Ranges,
+		CombinedDomain:   os.Getenv("COMBINED_DOMAIN"),
+		TopLevelDomain:   os.Getenv("TOP_LEVEL_DOMAIN"),
+		Proxied:          strings.ToLower(os.Getenv("CF_PROXIED")) == "true",
+		StaleThreshold:   getEnvOrDefaultInt("STALE_THRESHOLD_SECONDS", 3600), // 1 hour
+		CleanupInterval:  getEnvOrDefaultInt("CLEANUP_INTERVAL_SECONDS", 300), // 5 minutes
 	}
 
 	// At least one domain must be configured (both modes require this for safety)
+	hasCustomRanges := len(config.CustomIPv4Ranges) > 0 || len(config.CustomIPv6Ranges) > 0
 	if config.InternalDomain == "" && config.ExternalDomain == "" &&
-	   config.IPv6Domain == "" && config.TailscaleDomain == "" &&
-	   config.CombinedDomain == "" && config.TopLevelDomain == "" {
-		log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, TAILSCALE_DOMAIN, COMBINED_DOMAIN, or TOP_LEVEL_DOMAIN)")
+		config.IPv6Domain == "" && !hasCustomRanges &&
+		config.CombinedDomain == "" && config.TopLevelDomain == "" {
+		log.Fatal("At least one domain must be configured (INTERNAL_DOMAIN, EXTERNAL_DOMAIN, IPV6_DOMAIN, IPV4_RANGE_N/IPV6_RANGE_N, COMBINED_DOMAIN, or TOP_LEVEL_DOMAIN)")
+	}
+
+	// Log configured custom ranges
+	if len(customIPv4Ranges) > 0 {
+		log.Printf("Configured %d custom IPv4 range(s):", len(customIPv4Ranges))
+		for i, r := range customIPv4Ranges {
+			log.Printf("  [%d] %s -> %s", i+1, r.CIDR, r.Domain)
+		}
+	}
+	if len(customIPv6Ranges) > 0 {
+		log.Printf("Configured %d custom IPv6 range(s):", len(customIPv6Ranges))
+		for i, r := range customIPv6Ranges {
+			log.Printf("  [%d] %s -> %s", i+1, r.CIDR, r.Domain)
+		}
 	}
 
 	if cleanupMode {
@@ -482,13 +584,75 @@ func getEnvOrDefaultInt(key string, defaultValue int) int {
 	return intValue
 }
 
-func detectIPs() *IPAddresses {
-	ips := &IPAddresses{
-		InternalIPv4:  getInternalIPv4(),
-		TailscaleIPv4: getTailscaleIPv4(),
-		ExternalIPv4:  getExternalIPv4(),
-		ExternalIPv6:  getExternalIPv6(),
+// parseCustomRanges parses custom IP range configuration from environment variables
+// Format: ${prefix}_1=${CIDR}, ${prefix}_1_DOMAIN=${domain}
+// Example: IPV4_RANGE_1=100.0.0.0/8, IPV4_RANGE_1_DOMAIN=host.vpn.example.com
+func parseCustomRanges(prefix string, recordType string, maxRanges int) []CustomIPRange {
+	var ranges []CustomIPRange
+
+	for i := 1; i <= maxRanges; i++ {
+		cidrKey := fmt.Sprintf("%s_%d", prefix, i)
+		domainKey := fmt.Sprintf("%s_%d_DOMAIN", prefix, i)
+
+		cidr := os.Getenv(cidrKey)
+		domain := os.Getenv(domainKey)
+
+		// Both must be set for a valid range
+		if cidr == "" && domain == "" {
+			continue // Skip this index
+		}
+
+		if cidr == "" {
+			log.Printf("WARNING: %s is set but %s is not - skipping", domainKey, cidrKey)
+			continue
+		}
+
+		if domain == "" {
+			log.Printf("WARNING: %s is set but %s is not - skipping", cidrKey, domainKey)
+			continue
+		}
+
+		// Validate CIDR notation
+		_, _, err := net.ParseCIDR(cidr)
+		if err != nil {
+			log.Printf("WARNING: Invalid CIDR notation in %s: %s (%v) - skipping", cidrKey, cidr, err)
+			continue
+		}
+
+		ranges = append(ranges, CustomIPRange{
+			CIDR:   cidr,
+			Domain: domain,
+			Type:   recordType,
+		})
 	}
+
+	return ranges
+}
+
+func detectIPs(config *Config) *IPAddresses {
+	ips := &IPAddresses{
+		InternalIPv4:   getInternalIPv4(),
+		ExternalIPv4:   getExternalIPv4(),
+		ExternalIPv6:   getExternalIPv6(),
+		CustomRangeIPs: make(map[string][]string),
+	}
+
+	// Detect IPs for custom IPv4 ranges
+	for _, customRange := range config.CustomIPv4Ranges {
+		detectedIPs := getIPsInRange(customRange.CIDR, customRange.Domain)
+		if len(detectedIPs) > 0 {
+			ips.CustomRangeIPs[customRange.Domain] = detectedIPs
+		}
+	}
+
+	// Detect IPs for custom IPv6 ranges
+	for _, customRange := range config.CustomIPv6Ranges {
+		detectedIPs := getIPsInRange(customRange.CIDR, customRange.Domain)
+		if len(detectedIPs) > 0 {
+			ips.CustomRangeIPs[customRange.Domain] = detectedIPs
+		}
+	}
+
 	return ips
 }
 
@@ -554,12 +718,14 @@ func getInternalIPv4() []string {
 	return internalIPs
 }
 
-func getTailscaleIPv4() []string {
-	// Parse Tailscale IP ranges
-	var tailscaleNets []*net.IPNet
-	for _, cidr := range tailscaleRanges {
-		_, ipNet, _ := net.ParseCIDR(cidr)
-		tailscaleNets = append(tailscaleNets, ipNet)
+// getIPsInRange detects IPs on network interfaces that fall within the specified CIDR range
+// Supports both IPv4 and IPv6 ranges
+func getIPsInRange(cidr string, domain string) []string {
+	// Parse the CIDR
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		log.Printf("Error parsing CIDR %s: %v", cidr, err)
+		return []string{}
 	}
 
 	// Get all network interfaces
@@ -569,10 +735,10 @@ func getTailscaleIPv4() []string {
 		return []string{}
 	}
 
-	var tailscaleIPs []string
+	var foundIPs []string
 	seen := make(map[string]bool)
 
-	// Check each interface for Tailscale addresses
+	// Check each interface for matching addresses
 	for _, iface := range interfaces {
 		addrs, err := iface.Addrs()
 		if err != nil {
@@ -588,32 +754,30 @@ func getTailscaleIPv4() []string {
 				ip = v.IP
 			}
 
-			// Check if it's IPv4 and in Tailscale range
-			if ip == nil || ip.To4() == nil {
+			if ip == nil {
 				continue
 			}
 
-			for _, tailscaleNet := range tailscaleNets {
-				if tailscaleNet.Contains(ip) {
-					ipStr := ip.String()
-					// Avoid duplicates
-					if !seen[ipStr] {
-						seen[ipStr] = true
-						tailscaleIPs = append(tailscaleIPs, ipStr)
-						log.Printf("Found Tailscale IPv4: %s on interface %s", ipStr, iface.Name)
-					}
+			// Check if IP is in the specified range
+			if ipNet.Contains(ip) {
+				ipStr := ip.String()
+				// Avoid duplicates
+				if !seen[ipStr] {
+					seen[ipStr] = true
+					foundIPs = append(foundIPs, ipStr)
+					log.Printf("Found IP in range %s: %s on interface %s (for domain %s)", cidr, ipStr, iface.Name, domain)
 				}
 			}
 		}
 	}
 
-	if len(tailscaleIPs) == 0 {
-		log.Println("No Tailscale IPv4 addresses found")
+	if len(foundIPs) == 0 {
+		log.Printf("No IPs found in range %s (for domain %s)", cidr, domain)
 	} else {
-		log.Printf("Found %d Tailscale IPv4 address(es)", len(tailscaleIPs))
+		log.Printf("Found %d IP(s) in range %s (for domain %s)", len(foundIPs), cidr, domain)
 	}
 
-	return tailscaleIPs
+	return foundIPs
 }
 
 func getExternalIPv4() string {
