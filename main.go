@@ -875,7 +875,29 @@ func getExternalIPv6() string {
 	return ""
 }
 
-// CloudFlareAPI defines the interface for CloudFlare DNS operations
+// DNSRecord represents a generic DNS record (provider-agnostic)
+type DNSRecord struct {
+	ID      string // Provider-specific record ID
+	Type    string // A, AAAA, CNAME, TXT, etc.
+	Name    string // Full domain name
+	Content string // IP address or record content
+}
+
+// DNSProvider defines a generic interface for DNS operations
+// This allows supporting multiple providers: CloudFlare, Route53, DigitalOcean, etc.
+type DNSProvider interface {
+	GetRecordID(name, recordType string) string
+	GetRecord(name, recordType string) *DNSRecord
+	GetAllRecords(name, recordType string) []DNSRecord
+	CreateRecord(name, recordType, content string, proxied bool) bool
+	UpdateRecord(recordID, name, recordType, content string, proxied bool) bool
+	DeleteRecord(recordID, name, recordType string) bool
+	DeleteRecordIfExists(name, recordType string) bool
+	UpsertRecord(name, recordType, content string, proxied bool) bool
+	EnsureRecordExists(name, recordType, content string, proxied bool) bool
+}
+
+// CloudFlareAPI defines the interface for CloudFlare DNS operations (deprecated, use DNSProvider)
 type CloudFlareAPI interface {
 	getRecordID(name, recordType string) string
 	getRecord(name, recordType string) *CFRecord
@@ -888,15 +910,42 @@ type CloudFlareAPI interface {
 	ensureRecordExists(name, recordType, content string, proxied bool) bool
 }
 
-// CloudFlareClient handles CloudFlare API interactions
+// CloudFlareClient implements both DNSProvider and CloudFlareAPI
 type CloudFlareClient struct {
 	APIToken string
 	ZoneID   string
 	BaseURL  string
 }
 
-// Verify CloudFlareClient implements CloudFlareAPI
+// Verify CloudFlareClient implements both interfaces
 var _ CloudFlareAPI = (*CloudFlareClient)(nil)
+var _ DNSProvider = (*CloudFlareClient)(nil)
+
+// Helper functions to convert between CloudFlare-specific and generic types
+func cfRecordToDNSRecord(cfr *CFRecord) *DNSRecord {
+	if cfr == nil {
+		return nil
+	}
+	return &DNSRecord{
+		ID:      cfr.ID,
+		Type:    cfr.Type,
+		Name:    cfr.Name,
+		Content: cfr.Content,
+	}
+}
+
+func cfRecordsToDNSRecords(cfrs []CFRecord) []DNSRecord {
+	records := make([]DNSRecord, len(cfrs))
+	for i, cfr := range cfrs {
+		records[i] = DNSRecord{
+			ID:      cfr.ID,
+			Type:    cfr.Type,
+			Name:    cfr.Name,
+			Content: cfr.Content,
+		}
+	}
+	return records
+}
 
 // formatErrors converts CloudFlare error messages from json.RawMessage to readable strings
 func formatErrors(errors []json.RawMessage) string {
@@ -1195,6 +1244,45 @@ func (cf *CloudFlareClient) ensureRecordExists(name, recordType, content string,
 
 	// Record with this content doesn't exist - create it
 	return cf.createRecord(name, recordType, content, proxied)
+}
+
+
+// DNSProvider interface implementation (capitalized wrapper methods)
+
+func (cf *CloudFlareClient) GetRecordID(name, recordType string) string {
+	return cf.getRecordID(name, recordType)
+}
+
+func (cf *CloudFlareClient) GetRecord(name, recordType string) *DNSRecord {
+	return cfRecordToDNSRecord(cf.getRecord(name, recordType))
+}
+
+func (cf *CloudFlareClient) GetAllRecords(name, recordType string) []DNSRecord {
+	return cfRecordsToDNSRecords(cf.getAllRecords(name, recordType))
+}
+
+func (cf *CloudFlareClient) CreateRecord(name, recordType, content string, proxied bool) bool {
+	return cf.createRecord(name, recordType, content, proxied)
+}
+
+func (cf *CloudFlareClient) UpdateRecord(recordID, name, recordType, content string, proxied bool) bool {
+	return cf.updateRecord(recordID, name, recordType, content, proxied)
+}
+
+func (cf *CloudFlareClient) DeleteRecord(recordID, name, recordType string) bool {
+	return cf.deleteRecord(recordID, name, recordType)
+}
+
+func (cf *CloudFlareClient) DeleteRecordIfExists(name, recordType string) bool {
+	return cf.deleteRecordIfExists(name, recordType)
+}
+
+func (cf *CloudFlareClient) UpsertRecord(name, recordType, content string, proxied bool) bool {
+	return cf.upsertRecord(name, recordType, content, proxied)
+}
+
+func (cf *CloudFlareClient) EnsureRecordExists(name, recordType, content string, proxied bool) bool {
+	return cf.ensureRecordExists(name, recordType, content, proxied)
 }
 
 // Cleanup service functions
